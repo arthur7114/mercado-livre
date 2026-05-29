@@ -6,3 +6,4 @@ storage.json
 .DS_Store
 .vercel/
 npm-debug.log*
+.vercel
