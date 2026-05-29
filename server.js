@@ -9,20 +9,26 @@ const COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const TINY_AUTH_URL = 'https://accounts.tiny.com.br/realms/tiny/protocol/openid-connect/auth';
 const TINY_TOKEN_URL = 'https://accounts.tiny.com.br/realms/tiny/protocol/openid-connect/token';
 
+app.set('trust proxy', true);
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 function getEnvConfig(req) {
-  const hostUrl = `${req.protocol}://${req.get('host')}`;
+  const forwardedProto = (req.get('x-forwarded-proto') || req.protocol || 'https').split(',')[0].trim();
+  const forwardedHost = (req.get('x-forwarded-host') || req.get('host') || '').split(',')[0].trim();
+  const hostUrl = forwardedHost ? `${forwardedProto}://${forwardedHost}` : '';
   const appBaseUrl = (process.env.APP_BASE_URL || hostUrl).replace(/\/$/, '');
+  const redirectUri = (process.env.TINY_REDIRECT_URI || `${appBaseUrl}/callback`).replace(/\/$/, '');
 
   return {
     tinyClientId: process.env.TINY_CLIENT_ID || '',
     tinyClientSecret: process.env.TINY_CLIENT_SECRET || '',
-    geminiApiKey: process.env.GEMINI_API_KEY || '',
+    openAiApiKey: process.env.OPENAI_API_KEY || '',
+    openAiFastModel: process.env.OPENAI_FAST_MODEL || process.env.OPENAI_MODEL || 'gpt-4.1-nano',
+    openAiQualityModel: process.env.OPENAI_QUALITY_MODEL || 'gpt-4.1-mini',
     sessionSecret: process.env.SESSION_SECRET || '',
     appBaseUrl,
-    redirectUri: `${appBaseUrl}/callback`
+    redirectUri
   };
 }
 
@@ -105,7 +111,7 @@ function getPublicSettings(req) {
 
   return {
     tinyClientConfigured: Boolean(config.tinyClientId && config.tinyClientSecret),
-    geminiConfigured: Boolean(config.geminiApiKey),
+    openAiConfigured: Boolean(config.openAiApiKey),
     redirectUri: config.redirectUri,
     appBaseUrl: config.appBaseUrl,
     dictionary: [],
@@ -396,8 +402,8 @@ app.post('/api/optimize', async (req, res) => {
   try {
     const config = getEnvConfig(req);
 
-    if (!config.geminiApiKey) {
-      return res.status(400).json({ error: 'Chave de API do Gemini não configurada nas Environment Variables.' });
+    if (!config.openAiApiKey) {
+      return res.status(400).json({ error: 'Chave de API da OpenAI não configurada nas Environment Variables.' });
     }
 
     const { title, sku, category, dictionary = [], basePrompt = '' } = req.body;
@@ -419,51 +425,100 @@ app.post('/api/optimize', async (req, res) => {
       });
     }
 
-    const promptText = `
-${basePrompt}
+    const promptText = [
+      basePrompt,
+      dictionaryInstructions,
+      `Produto: ${title}`,
+      `SKU: ${sku || 'Nao informado'}`,
+      `Categoria: ${category || 'Nao informada'}`,
+      'Crie um titulo comercial claro para Mercado Livre no Brasil.',
+      'Limite absoluto: 60 caracteres.'
+    ].filter(Boolean).join('\n\n');
 
-${dictionaryInstructions}
-
-Dados do produto a otimizar:
-- Título Atual no ERP: "${title}"
-- SKU: "${sku || 'Não informado'}"
-- Categoria: "${category || 'Não informada'}"
-
-Gere o objeto JSON seguindo estritamente as regras de limite de 60 caracteres.
-`;
-
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${config.geminiApiKey}`;
-    const geminiResponse = await fetch(geminiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: promptText
-          }]
-        }],
-        generationConfig: {
-          responseMimeType: 'application/json'
+    const schema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tituloOtimizado: {
+          type: 'string',
+          description: 'Titulo otimizado para Mercado Livre com no maximo 60 caracteres.'
         }
-      })
-    });
+      },
+      required: ['tituloOtimizado']
+    };
 
-    if (!geminiResponse.ok) {
-      const errorText = await geminiResponse.text();
-      return res.status(geminiResponse.status).json({ error: `Erro na API do Gemini: ${errorText}` });
+    async function requestOptimization(model) {
+      const openAiResponse = await fetch('https://api.openai.com/v1/responses', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.openAiApiKey}`
+        },
+        body: JSON.stringify({
+          model,
+          input: [
+            {
+              role: 'system',
+              content: 'Voce otimiza titulos de produtos para Mercado Livre. Responda apenas pelo schema JSON. Preserve informacoes importantes, remova codigos internos, evite promessas exageradas.'
+            },
+            {
+              role: 'user',
+              content: promptText
+            }
+          ],
+          max_output_tokens: 160,
+          text: {
+            format: {
+              type: 'json_schema',
+              name: 'titulo_otimizado',
+              strict: true,
+              schema
+            }
+          }
+        })
+      });
+
+      if (!openAiResponse.ok) {
+        const errorText = await openAiResponse.text();
+        throw new Error(`OpenAI ${model}: ${openAiResponse.status} - ${errorText}`);
+      }
+
+      const result = await openAiResponse.json();
+      const candidateText = result.output_text || result.output
+        ?.flatMap(item => item.content || [])
+        ?.map(content => content.text || '')
+        ?.join('');
+
+      if (!candidateText) {
+        throw new Error(`OpenAI ${model}: resposta vazia.`);
+      }
+
+      const optimizedData = JSON.parse(candidateText.trim());
+      const optimizedTitle = optimizedData.tituloOtimizado?.trim();
+
+      if (!optimizedTitle || optimizedTitle.length > 60) {
+        throw new Error(`OpenAI ${model}: titulo invalido ou acima de 60 caracteres.`);
+      }
+
+      return {
+        tituloOtimizado: optimizedTitle,
+        modelo: model
+      };
     }
 
-    const result = await geminiResponse.json();
-    const candidateText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+    const models = [...new Set([config.openAiFastModel, config.openAiQualityModel].filter(Boolean))];
+    let lastError;
 
-    if (!candidateText) {
-      throw new Error('A IA não gerou conteúdo.');
+    for (const model of models) {
+      try {
+        return res.json(await requestOptimization(model));
+      } catch (error) {
+        lastError = error;
+        console.warn(error.message);
+      }
     }
 
-    const optimizedData = JSON.parse(candidateText.trim());
-    res.json(optimizedData);
+    throw lastError || new Error('A IA não gerou conteúdo válido.');
   } catch (error) {
     console.error('Erro na otimização:', error);
     res.status(500).json({ error: `Falha na otimização: ${error.message}` });

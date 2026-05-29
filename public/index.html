@@ -28,10 +28,10 @@
           <span class="status-indicator"></span>
           <span class="status-label">Tiny ERP: Desconectado</span>
         </div>
-        <!-- Gemini API Key Status Badge -->
-        <div id="gemini-status" class="status-badge disconnected">
+        <!-- OpenAI API Key Status Badge -->
+        <div id="openai-status" class="status-badge disconnected">
           <span class="status-indicator"></span>
-          <span class="status-label">Gemini: Sem Chave</span>
+          <span class="status-label">OpenAI: Sem Chave</span>
         </div>
       </div>
     </header>
@@ -56,7 +56,7 @@
       <section id="tab-products" class="tab-content active">
         <div class="workspace-card">
           <h2 class="section-title">Gerenciador de Cadastros</h2>
-          <p class="section-subtitle">Filtre, otimize com IA do Gemini e salve em lote as alterações direto no Tiny ERP para exportação ao Mercado Livre.</p>
+          <p class="section-subtitle">Filtre, otimize com IA da OpenAI e salve em lote as alterações direto no Tiny ERP para exportação ao Mercado Livre.</p>
 
           <!-- Search & Filter Controls -->
           <form id="filters-form" class="filters-row" onsubmit="loadProducts(event)">
@@ -162,7 +162,7 @@
           <!-- Column 2: Prompt Settings -->
           <div class="workspace-card">
             <h2 class="section-title">Instruções da IA (Prompt Base)</h2>
-            <p class="section-subtitle">Personalize a personalidade e as diretrizes que o Gemini deve seguir estritamente ao estruturar e otimizar os títulos.</p>
+            <p class="section-subtitle">Personalize a personalidade e as diretrizes que a OpenAI deve seguir estritamente ao estruturar e otimizar os títulos.</p>
 
             <div class="form-group">
               <textarea id="ai-base-prompt" rows="15" placeholder="Instruções para o modelo..."></textarea>
@@ -176,15 +176,15 @@
       <section id="tab-settings" class="tab-content">
         <div class="workspace-card max-width-md">
           <h2 class="section-title">Configurações de Conectividade</h2>
-          <p class="section-subtitle">Configure as credenciais das APIs para habilitar a conexão direta com o Olist/Tiny ERP e com o Google Gemini.</p>
+          <p class="section-subtitle">Configure as credenciais das APIs para habilitar a conexão direta com o Olist/Tiny ERP e com a OpenAI.</p>
 
           <form id="settings-form" onsubmit="saveSettings(event)" class="settings-form-layout">
             
             <div class="settings-section">
-              <h3>🔑 Chave do Google Gemini AI</h3>
+              <h3>🔑 Chave da OpenAI</h3>
               <div class="form-group">
-                <label for="settings-gemini-key">Gemini API Key</label>
-                <input type="text" id="settings-gemini-key" placeholder="Configure GEMINI_API_KEY na Vercel" readonly>
+                <label for="settings-openai-key">OpenAI API Key</label>
+                <input type="text" id="settings-openai-key" placeholder="Configure OPENAI_API_KEY na Vercel" readonly>
                 <small class="form-help">Utilizada para interpretar nomes internos e otimizar títulos. Configure em Environment Variables.</small>
               </div>
             </div>

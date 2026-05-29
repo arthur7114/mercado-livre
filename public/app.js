@@ -6,7 +6,7 @@ const limit = 20;
 let totalProducts = 0;
 let settings = {
   tinyClientConfigured: false,
-  geminiConfigured: false,
+  openAiConfigured: false,
   redirectUri: '',
   dictionary: [],
   basePrompt: ''
@@ -90,14 +90,14 @@ async function checkConnection() {
       oauthBtn.disabled = true;
     }
 
-    // Update Gemini Status
-    const geminiBadge = document.getElementById('gemini-status');
-    if (settings.geminiConfigured) {
-      geminiBadge.className = 'status-badge connected';
-      geminiBadge.querySelector('.status-label').innerText = 'Gemini: Pronto';
+    // Update OpenAI Status
+    const openAiBadge = document.getElementById('openai-status');
+    if (settings.openAiConfigured) {
+      openAiBadge.className = 'status-badge connected';
+      openAiBadge.querySelector('.status-label').innerText = 'OpenAI: Pronto';
     } else {
-      geminiBadge.className = 'status-badge disconnected';
-      geminiBadge.querySelector('.status-label').innerText = 'Gemini: Sem Chave';
+      openAiBadge.className = 'status-badge disconnected';
+      openAiBadge.querySelector('.status-label').innerText = 'OpenAI: Sem Chave';
     }
   } catch (err) {
     console.error('Erro ao verificar conexão:', err);
@@ -117,7 +117,7 @@ async function loadSettings() {
     };
 
     // Populate Settings Inputs
-    document.getElementById('settings-gemini-key').value = settings.geminiConfigured ? 'Configurado na Vercel' : '';
+    document.getElementById('settings-openai-key').value = settings.openAiConfigured ? 'Configurado na Vercel' : '';
     document.getElementById('settings-client-id').value = settings.tinyClientConfigured ? 'Configurado na Vercel' : '';
     document.getElementById('settings-client-secret').value = settings.tinyClientConfigured ? 'Configurado na Vercel' : '';
     document.getElementById('settings-redirect-uri').value = settings.redirectUri;
@@ -408,8 +408,8 @@ function updateSelectedCount() {
 
 // OPTIMIZE INDIVIDUAL PRODUCT USING AI
 async function optimizeProduct(productId) {
-  if (!settings.geminiConfigured) {
-    showToast('Chave de API do Gemini não configurada na Vercel.', 'warning');
+  if (!settings.openAiConfigured) {
+    showToast('Chave de API da OpenAI não configurada na Vercel.', 'warning');
     switchTab('settings');
     return;
   }

@@ -1,7 +1,7 @@
 {
   "name": "cadastros-ml-otimizador",
   "version": "1.0.0",
-  "description": "Otimizador de cadastros Tiny/Olist para o Mercado Livre usando Gemini",
+  "description": "Otimizador de cadastros Tiny/Olist para o Mercado Livre usando OpenAI",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
