@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Otimizador de Cadastros - Olist/Tiny para Mercado Livre</title>
+  <!-- Google Fonts Outfit & Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- App Container -->
+  <div class="app-container">
+    
+    <!-- Topbar Header -->
+    <header class="app-header">
+      <div class="header-logo">
+        <span class="logo-icon">⚡</span>
+        <h1>Mercado Livre <span class="gradient-text">Otimizador</span></h1>
+      </div>
+      
+      <div class="header-status">
+        <!-- Tiny Connection Status Badge -->
+        <div id="tiny-status" class="status-badge disconnected">
+          <span class="status-indicator"></span>
+          <span class="status-label">Tiny ERP: Desconectado</span>
+        </div>
+        <!-- Gemini API Key Status Badge -->
+        <div id="gemini-status" class="status-badge disconnected">
+          <span class="status-indicator"></span>
+          <span class="status-label">Gemini: Sem Chave</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Navigation Tabs -->
+    <nav class="app-tabs">
+      <button class="tab-btn active" id="tab-products-btn" onclick="switchTab('products')">
+        <span class="tab-icon">📦</span> Produtos
+      </button>
+      <button class="tab-btn" id="tab-rules-btn" onclick="switchTab('rules')">
+        <span class="tab-icon">🧠</span> Regras e Dicionário
+      </button>
+      <button class="tab-btn" id="tab-settings-btn" onclick="switchTab('settings')">
+        <span class="tab-icon">⚙️</span> Conectividade
+      </button>
+    </nav>
+
+    <!-- Main Workspace Content -->
+    <main class="app-content">
+      
+      <!-- TAB: PRODUCTS -->
+      <section id="tab-products" class="tab-content active">
+        <div class="workspace-card">
+          <h2 class="section-title">Gerenciador de Cadastros</h2>
+          <p class="section-subtitle">Filtre, otimize com IA do Gemini e salve em lote as alterações direto no Tiny ERP para exportação ao Mercado Livre.</p>
+
+          <!-- Search & Filter Controls -->
+          <form id="filters-form" class="filters-row" onsubmit="loadProducts(event)">
+            <div class="input-group">
+              <label for="filter-nome">Nome do Produto</label>
+              <input type="text" id="filter-nome" placeholder="Ex: Camiseta Masc...">
+            </div>
+            <div class="input-group">
+              <label for="filter-sku">SKU / Código</label>
+              <input type="text" id="filter-sku" placeholder="Ex: CAM-123">
+            </div>
+            <div class="input-group">
+              <label for="filter-situacao">Situação</label>
+              <select id="filter-situacao">
+                <option value="A">Ativo</option>
+                <option value="I">Inativo</option>
+                <option value="E">Excluído</option>
+              </select>
+            </div>
+            <button type="submit" class="btn-primary search-btn">Filtrar</button>
+          </form>
+
+          <!-- Bulk Actions Bar -->
+          <div class="bulk-actions-bar">
+            <div class="bulk-selection">
+              <input type="checkbox" id="select-all-checkbox" onchange="toggleSelectAll(this)">
+              <label for="select-all-checkbox">Selecionar Todos (<span id="selected-count">0</span>)</label>
+            </div>
+            <div class="bulk-buttons">
+              <button class="btn-secondary" onclick="bulkOptimize()"><span class="btn-icon">✨</span> Otimizar com IA</button>
+              <button class="btn-success" onclick="bulkSave()"><span class="btn-icon">💾</span> Salvar no Tiny</button>
+            </div>
+          </div>
+
+          <!-- Products Table -->
+          <div class="table-container">
+            <table class="products-table">
+              <thead>
+                <tr>
+                  <th width="40">Sel</th>
+                  <th width="150">SKU / Preço</th>
+                  <th width="300">Título ERP Atual</th>
+                  <th width="300">Sugestão Mercado Livre (IA)</th>
+                  <th width="140">Requisitos ML</th>
+                  <th width="100">Ações</th>
+                </tr>
+              </thead>
+              <tbody id="products-list">
+                <!-- Dynamic products insertion -->
+                <tr>
+                  <td colspan="6" class="table-empty">
+                    Carregando produtos... conecte-se ao Tiny ERP na aba "Conectividade" e clique em Filtrar.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Pagination -->
+          <div class="pagination-row">
+            <span class="pagination-info">Mostrando itens <span id="pag-start">0</span> a <span id="pag-end">0</span> de <span id="pag-total">0</span></span>
+            <div class="pagination-buttons">
+              <button class="btn-icon-only" id="prev-page-btn" onclick="changePage(-1)" disabled>◀</button>
+              <span class="page-num" id="current-page">Página 1</span>
+              <button class="btn-icon-only" id="next-page-btn" onclick="changePage(1)" disabled>▶</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: RULES -->
+      <section id="tab-rules" class="tab-content">
+        <div class="grid-two-columns">
+          
+          <!-- Column 1: Custom Dictionary -->
+          <div class="workspace-card">
+            <h2 class="section-title">Dicionário de Termos Internos</h2>
+            <p class="section-subtitle">Defina regras de tradução para abreviações ou exclusão de palavras reservadas para uso interno das suas etiquetas.</p>
+
+            <form id="add-term-form" class="dictionary-add-row" onsubmit="addDictionaryEntry(event)">
+              <input type="text" id="term-from" placeholder="Termo Original (Ex: MASC)" required>
+              <span class="arrow-indicator">➔</span>
+              <input type="text" id="term-to" placeholder="Substituir por (Vazio remove)">
+              <button type="submit" class="btn-primary">Adicionar</button>
+            </form>
+
+            <div class="dictionary-list-container">
+              <table class="dictionary-table">
+                <thead>
+                  <tr>
+                    <th>Termo Original</th>
+                    <th>Substituição</th>
+                    <th width="60">Ação</th>
+                  </tr>
+                </thead>
+                <tbody id="dictionary-list">
+                  <!-- Dynamic entries -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Column 2: Prompt Settings -->
+          <div class="workspace-card">
+            <h2 class="section-title">Instruções da IA (Prompt Base)</h2>
+            <p class="section-subtitle">Personalize a personalidade e as diretrizes que o Gemini deve seguir estritamente ao estruturar e otimizar os títulos.</p>
+
+            <div class="form-group">
+              <textarea id="ai-base-prompt" rows="15" placeholder="Instruções para o modelo..."></textarea>
+            </div>
+            <button class="btn-primary" onclick="savePrompt()"><span class="btn-icon">💾</span> Salvar Prompt</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: SETTINGS -->
+      <section id="tab-settings" class="tab-content">
+        <div class="workspace-card max-width-md">
+          <h2 class="section-title">Configurações de Conectividade</h2>
+          <p class="section-subtitle">Configure as credenciais das APIs para habilitar a conexão direta com o Olist/Tiny ERP e com o Google Gemini.</p>
+
+          <form id="settings-form" onsubmit="saveSettings(event)" class="settings-form-layout">
+            
+            <div class="settings-section">
+              <h3>🔑 Chave do Google Gemini AI</h3>
+              <div class="form-group">
+                <label for="settings-gemini-key">Gemini API Key</label>
+                <input type="text" id="settings-gemini-key" placeholder="Configure GEMINI_API_KEY na Vercel" readonly>
+                <small class="form-help">Utilizada para interpretar nomes internos e otimizar títulos. Configure em Environment Variables.</small>
+              </div>
+            </div>
+
+            <div class="settings-section">
+              <h3>📦 Conexão Tiny ERP (Olist)</h3>
+              
+              <div class="form-group">
+                <label for="settings-client-id">Tiny Client ID</label>
+                <input type="text" id="settings-client-id" placeholder="Configure TINY_CLIENT_ID na Vercel" readonly>
+              </div>
+
+              <div class="form-group">
+                <label for="settings-client-secret">Tiny Client Secret</label>
+                <input type="text" id="settings-client-secret" placeholder="Configure TINY_CLIENT_SECRET na Vercel" readonly>
+              </div>
+
+              <div class="form-group">
+                <label for="settings-redirect-uri">Redirect URI</label>
+                <input type="text" id="settings-redirect-uri" value="" readonly>
+                <small class="form-help">Esta URL deve ser cadastrada nas configurações do seu aplicativo dentro do Tiny.</small>
+              </div>
+            </div>
+
+            <div class="settings-actions">
+              <button type="submit" class="btn-primary">Como configurar</button>
+              <button type="button" id="btn-oauth-connect" class="btn-secondary" onclick="startOAuthFlow()" disabled>
+                Conectar ao Tiny ERP (OAuth)
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- Product Details Modal (Collapsible drawer / absolute display) -->
+  <div id="details-modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modal-product-title">Detalhes do Produto</h3>
+        <button class="close-btn" onclick="closeDetailsModal()">&times;</button>
+      </div>
+      <div class="modal-body" id="modal-product-body">
+        <!-- Dynamic loading -->
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
