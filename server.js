@@ -493,6 +493,8 @@ app.post('/api/optimize', async (req, res) => {
       'Crie um titulo comercial claro para Mercado Livre no Brasil.',
       'Limite absoluto: 60 caracteres.',
       'Nao copie o titulo original sem melhorar. Reordene, limpe ruido e remova termos sem valor comercial quando houver oportunidade segura.',
+      'O titulo nao pode ficar generico. Se houver marca, modelo, referencia, material, cor, tamanho, quantidade ou compatibilidade no original, preserve os atributos que diferenciam o produto.',
+      'Nao remova modelo ou referencia como FB-281 P quando isso ajuda a diferenciar o item para o comprador.',
       'Se o melhor titulo possivel for igual ao original, explique em observacoes e marque needs_review.',
       'Retorne diagnostico completo de qualidade, confianca e revisao humana conforme o schema.',
       'Se confidence < 0.70, humanGate deve ser true.'
@@ -524,6 +526,9 @@ app.post('/api/optimize', async (req, res) => {
       '- O título otimizado deve ter no máximo 60 caracteres.',
       '- Quando algum atributo não for conhecido, retorne string vazia. Nunca retorne null.',
       '- Não mantenha códigos ou referências internas no título comercial quando eles não ajudarem o comprador.',
+      '- Preserve códigos de modelo, referência de produto e marca quando eles diferenciam o item vendido.',
+      '- Evite títulos genéricos como "Bolsa Feminina em P.U." quando houver modelo, referência, marca ou outro atributo distintivo no original.',
+      '- Um bom título deve combinar tipo de produto + atributo distintivo disponível, por exemplo marca/modelo/material/cor/tamanho/quantidade/compatibilidade.',
       '- Se o título original tiver palavras soltas como estilo, novo, cadastro, teste, ml ou termos operacionais sem função comercial, remova-as.',
       '- Se o título otimizado ficar igual ao original, status deve ser needs_review e observacoes deve explicar por que não houve melhoria segura.'
     ].join('\n');
@@ -645,6 +650,27 @@ app.post('/api/optimize', async (req, res) => {
         .toLowerCase();
     }
 
+    function containsNormalizedToken(haystack, needle) {
+      const normalizedHaystack = normalizeForComparison(haystack);
+      const normalizedNeedle = normalizeForComparison(needle);
+      if (!normalizedNeedle) return true;
+
+      return normalizedNeedle
+        .split(' ')
+        .filter(token => token.length > 1)
+        .every(token => normalizedHaystack.includes(token));
+    }
+
+    function markNeedsReview(normalized, problem, observation) {
+      normalized.status = 'needs_review';
+      normalized.humanGate = true;
+      normalized.problemasDetectados.push(problem);
+
+      if (observation && !normalized.observacoes) {
+        normalized.observacoes = observation;
+      }
+    }
+
     function normalizeOptimization(rawData, model) {
       const atributos = rawData?.atributosIdentificados || {};
       const normalized = {
@@ -696,12 +722,27 @@ app.post('/api/optimize', async (req, res) => {
       }
 
       if (normalizeForComparison(normalized.tituloOtimizado) === normalizeForComparison(title)) {
-        normalized.status = 'needs_review';
-        normalized.humanGate = true;
-        normalized.problemasDetectados.push('Título otimizado ficou igual ao título original.');
-        if (!normalized.observacoes) {
-          normalized.observacoes = 'A IA não encontrou uma melhoria segura para o título com os dados disponíveis.';
-        }
+        markNeedsReview(
+          normalized,
+          'Título otimizado ficou igual ao título original.',
+          'A IA não encontrou uma melhoria segura para o título com os dados disponíveis.'
+        );
+      }
+
+      if (normalized.atributosIdentificados.modelo && !containsNormalizedToken(normalized.tituloOtimizado, normalized.atributosIdentificados.modelo)) {
+        markNeedsReview(
+          normalized,
+          'Título ficou genérico por remover o modelo identificado.',
+          'Preserve o modelo quando ele diferencia o produto.'
+        );
+      }
+
+      if (normalized.atributosIdentificados.marca && !containsNormalizedToken(normalized.tituloOtimizado, normalized.atributosIdentificados.marca)) {
+        markNeedsReview(
+          normalized,
+          'Título ficou genérico por remover a marca identificada.',
+          'Preserve a marca quando ela aparece nos dados do produto.'
+        );
       }
 
       if (normalized.status === 'blocked' && !normalized.motivoHumanGate) {
@@ -776,10 +817,11 @@ app.post('/api/optimize', async (req, res) => {
       try {
         const optimization = await requestOptimization(model);
         const unchangedTitle = normalizeForComparison(optimization.tituloOtimizado) === normalizeForComparison(title);
+        const tooGenericTitle = optimization.problemasDetectados.some(problem => problem.includes('Título ficou genérico'));
         const hasFallbackModel = index < models.length - 1;
 
-        if (unchangedTitle && hasFallbackModel) {
-          throw new Error(`OpenAI ${model}: titulo igual ao original; tentando modelo de qualidade.`);
+        if ((unchangedTitle || tooGenericTitle) && hasFallbackModel) {
+          throw new Error(`OpenAI ${model}: titulo sem melhoria suficiente; tentando modelo de qualidade.`);
         }
 
         return res.json(optimization);
