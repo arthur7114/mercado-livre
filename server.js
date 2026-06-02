@@ -492,6 +492,8 @@ app.post('/api/optimize', async (req, res) => {
       `Categoria: ${category || 'Nao informada'}`,
       'Crie um titulo comercial claro para Mercado Livre no Brasil.',
       'Limite absoluto: 60 caracteres.',
+      'Nao copie o titulo original sem melhorar. Reordene, limpe ruido e remova termos sem valor comercial quando houver oportunidade segura.',
+      'Se o melhor titulo possivel for igual ao original, explique em observacoes e marque needs_review.',
       'Retorne diagnostico completo de qualidade, confianca e revisao humana conforme o schema.',
       'Se confidence < 0.70, humanGate deve ser true.'
     ].filter(Boolean).join('\n\n');
@@ -520,7 +522,10 @@ app.post('/api/optimize', async (req, res) => {
       '- Se o produto for ambíguo, incompleto, genérico ou parecer apenas um código interno, marque humanGate como true.',
       '- Se a confiança for menor que 0.70, humanGate deve ser true.',
       '- O título otimizado deve ter no máximo 60 caracteres.',
-      '- Quando algum atributo não for conhecido, retorne string vazia. Nunca retorne null.'
+      '- Quando algum atributo não for conhecido, retorne string vazia. Nunca retorne null.',
+      '- Não mantenha códigos ou referências internas no título comercial quando eles não ajudarem o comprador.',
+      '- Se o título original tiver palavras soltas como estilo, novo, cadastro, teste, ml ou termos operacionais sem função comercial, remova-as.',
+      '- Se o título otimizado ficar igual ao original, status deve ser needs_review e observacoes deve explicar por que não houve melhoria segura.'
     ].join('\n');
 
     const schema = {
@@ -630,6 +635,16 @@ app.post('/api/optimize', async (req, res) => {
       return lastSpace > 35 ? sliced.slice(0, lastSpace).trim() : sliced;
     }
 
+    function normalizeForComparison(value) {
+      return normalizeString(value)
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^\p{L}\p{N}]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+    }
+
     function normalizeOptimization(rawData, model) {
       const atributos = rawData?.atributosIdentificados || {};
       const normalized = {
@@ -678,6 +693,15 @@ app.post('/api/optimize', async (req, res) => {
         normalized.status = 'blocked';
         normalized.humanGate = true;
         normalized.problemasDetectados.push('A IA não gerou um título seguro.');
+      }
+
+      if (normalizeForComparison(normalized.tituloOtimizado) === normalizeForComparison(title)) {
+        normalized.status = 'needs_review';
+        normalized.humanGate = true;
+        normalized.problemasDetectados.push('Título otimizado ficou igual ao título original.');
+        if (!normalized.observacoes) {
+          normalized.observacoes = 'A IA não encontrou uma melhoria segura para o título com os dados disponíveis.';
+        }
       }
 
       if (normalized.status === 'blocked' && !normalized.motivoHumanGate) {
@@ -747,9 +771,18 @@ app.post('/api/optimize', async (req, res) => {
     const models = [...new Set([config.openAiFastModel, config.openAiQualityModel].filter(Boolean))];
     let lastError;
 
-    for (const model of models) {
+    for (let index = 0; index < models.length; index += 1) {
+      const model = models[index];
       try {
-        return res.json(await requestOptimization(model));
+        const optimization = await requestOptimization(model);
+        const unchangedTitle = normalizeForComparison(optimization.tituloOtimizado) === normalizeForComparison(title);
+        const hasFallbackModel = index < models.length - 1;
+
+        if (unchangedTitle && hasFallbackModel) {
+          throw new Error(`OpenAI ${model}: titulo igual ao original; tentando modelo de qualidade.`);
+        }
+
+        return res.json(optimization);
       } catch (error) {
         lastError = error;
         console.warn(error.message);
