@@ -5,12 +5,25 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const TOKEN_COOKIE = 'tiny_oauth';
+const TOKEN_COOKIE_CHUNKS = `${TOKEN_COOKIE}_chunks`;
+const TOKEN_COOKIE_CHUNK_SIZE = 3500;
+const TOKEN_COOKIE_MAX_CHUNKS = 8;
 const COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const TINY_AUTH_URL = 'https://accounts.tiny.com.br/realms/tiny/protocol/openid-connect/auth';
 const TINY_TOKEN_URL = 'https://accounts.tiny.com.br/realms/tiny/protocol/openid-connect/token';
 
 app.set('trust proxy', true);
 app.use(express.json({ limit: '1mb' }));
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/') || req.path === '/callback') {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+  }
+
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 function getEnvConfig(req) {
@@ -37,6 +50,21 @@ function getCookie(req, name) {
   const cookies = cookieHeader.split(';').map(cookie => cookie.trim()).filter(Boolean);
   const cookie = cookies.find(item => item.startsWith(`${name}=`));
   return cookie ? decodeURIComponent(cookie.slice(name.length + 1)) : '';
+}
+
+function getTokenCookie(req) {
+  const chunkCount = Number.parseInt(getCookie(req, TOKEN_COOKIE_CHUNKS), 10);
+  if (Number.isFinite(chunkCount) && chunkCount > 0 && chunkCount <= TOKEN_COOKIE_MAX_CHUNKS) {
+    let value = '';
+    for (let index = 0; index < chunkCount; index += 1) {
+      const chunk = getCookie(req, `${TOKEN_COOKIE}.${index}`);
+      if (!chunk) return '';
+      value += chunk;
+    }
+    return value;
+  }
+
+  return getCookie(req, TOKEN_COOKIE);
 }
 
 function getEncryptionKey(secret) {
@@ -80,30 +108,57 @@ function decryptTokenPayload(value, secret) {
 
 function readTokenSession(req) {
   const config = getEnvConfig(req);
-  return decryptTokenPayload(getCookie(req, TOKEN_COOKIE), config.sessionSecret);
+  return decryptTokenPayload(getTokenCookie(req), config.sessionSecret);
 }
 
 function writeTokenSession(res, req, session) {
   const config = getEnvConfig(req);
   const secure = config.appBaseUrl.startsWith('https://');
   const encrypted = encryptTokenPayload(session, config.sessionSecret);
-  const cookieParts = [
-    `${TOKEN_COOKIE}=${encodeURIComponent(encrypted)}`,
+  const maxAge = Math.floor(COOKIE_MAX_AGE_MS / 1000);
+  const commonParts = [
     'HttpOnly',
     'SameSite=Lax',
     'Path=/',
-    `Max-Age=${Math.floor(COOKIE_MAX_AGE_MS / 1000)}`
+    `Max-Age=${maxAge}`
   ];
 
   if (secure) {
-    cookieParts.push('Secure');
+    commonParts.push('Secure');
   }
 
-  res.setHeader('Set-Cookie', cookieParts.join('; '));
+  const clearParts = [
+    `${TOKEN_COOKIE}=`,
+    ...commonParts.filter(part => !part.startsWith('Max-Age=')),
+    'Max-Age=0'
+  ];
+  const cookies = [clearParts.join('; ')];
+
+  const chunks = encrypted.match(new RegExp(`.{1,${TOKEN_COOKIE_CHUNK_SIZE}}`, 'g')) || [];
+  cookies.push(`${TOKEN_COOKIE_CHUNKS}=${chunks.length}; ${commonParts.join('; ')}`);
+
+  chunks.forEach((chunk, index) => {
+    cookies.push(`${TOKEN_COOKIE}.${index}=${encodeURIComponent(chunk)}; ${commonParts.join('; ')}`);
+  });
+
+  for (let index = chunks.length; index < TOKEN_COOKIE_MAX_CHUNKS; index += 1) {
+    cookies.push(`${TOKEN_COOKIE}.${index}=; ${commonParts.filter(part => !part.startsWith('Max-Age=')).join('; ')}; Max-Age=0`);
+  }
+
+  res.setHeader('Set-Cookie', cookies);
 }
 
 function clearTokenSession(res) {
-  res.setHeader('Set-Cookie', `${TOKEN_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+  const cookies = [
+    `${TOKEN_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`,
+    `${TOKEN_COOKIE_CHUNKS}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`
+  ];
+
+  for (let index = 0; index < TOKEN_COOKIE_MAX_CHUNKS; index += 1) {
+    cookies.push(`${TOKEN_COOKIE}.${index}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+  }
+
+  res.setHeader('Set-Cookie', cookies);
 }
 
 function getPublicSettings(req) {
@@ -131,13 +186,13 @@ async function checkAndRefreshToken(req, res) {
     throw new Error('SESSION_SECRET não configurado nas variáveis de ambiente.');
   }
 
-  if (!session?.refreshToken) {
-    throw new Error('Não conectado ao Tiny ERP. Conecte-se na aba Configurações.');
-  }
-
   const now = Date.now();
   if (session.accessToken && now < (session.tokenExpiry - 300000)) {
     return session.accessToken;
+  }
+
+  if (!session?.refreshToken) {
+    throw new Error('Sessão do Tiny ERP sem refresh token. Reconecte na aba Conectividade.');
   }
 
   console.log('Access token expirado ou prestes a expirar. Renovando token...');
@@ -255,6 +310,10 @@ app.get('/callback', async (req, res) => {
     }
 
     const data = await response.json();
+    if (!data.access_token) {
+      return res.send('Token de acesso não recebido do Tiny ERP.');
+    }
+
     writeTokenSession(res, req, {
       accessToken: data.access_token,
       refreshToken: data.refresh_token,

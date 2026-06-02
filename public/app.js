@@ -118,7 +118,7 @@ function setAiQualityPanel(productId, content) {
 // CHECK CONNECTIONS & CREDENTIALS STATUS
 async function checkConnection() {
   try {
-    const res = await fetch('/api/auth/status');
+    const res = await fetch('/api/auth/status', { cache: 'no-store' });
     authStatus = await res.json();
     
     const tinyBadge = document.getElementById('tiny-status');
@@ -164,7 +164,7 @@ async function checkConnection() {
 // FETCH SETTINGS FROM BACKEND
 async function loadSettings() {
   try {
-    const res = await fetch('/api/settings');
+    const res = await fetch('/api/settings', { cache: 'no-store' });
     const serverSettings = await res.json();
     const localSettings = loadLocalSettings();
     settings = {
@@ -221,7 +221,7 @@ async function saveSettings(e) {
 // INITIATE OAUTH FLOW WITH TINY ERP
 async function startOAuthFlow() {
   try {
-    const res = await fetch('/api/auth/url');
+    const res = await fetch('/api/auth/url', { cache: 'no-store' });
     if (!res.ok) {
       const data = await res.json();
       throw new Error(data.error || 'Erro desconhecido');
@@ -294,7 +294,7 @@ async function loadProducts(e) {
   if (codigo) queryParams.append('codigo', codigo);
 
   try {
-    const res = await fetch(`/api/products?${queryParams.toString()}`);
+    const res = await fetch(`/api/products?${queryParams.toString()}`, { cache: 'no-store' });
     if (!res.ok) {
       const errData = await res.json();
       throw new Error(errData.error || 'Falha ao buscar produtos');
