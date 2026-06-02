@@ -58,6 +58,63 @@ function showToast(message, type = 'info') {
   }, 4000);
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function getAiStatusLabel(status) {
+  if (status === 'ok') return 'Aprovado';
+  if (status === 'blocked') return 'Bloqueado';
+  return 'Revisar';
+}
+
+function renderAiQualityPanel(data) {
+  if (!data) return '<div class="ai-quality-panel empty">Aguardando análise da IA.</div>';
+
+  const confidence = Number.isFinite(Number(data.confidence)) ? Number(data.confidence) : 0;
+  const confidenceLabel = `${Math.round(confidence * 100)}%`;
+  const statusClass = data.status === 'ok' ? 'ok' : data.status === 'blocked' ? 'blocked' : 'needs-review';
+  const problems = Array.isArray(data.problemasDetectados) ? data.problemasDetectados : [];
+  const removedTerms = Array.isArray(data.termosRemovidos) ? data.termosRemovidos : [];
+  const attrs = data.atributosIdentificados || {};
+  const attrSummary = [
+    attrs.marca && `Marca: ${attrs.marca}`,
+    attrs.tipoProduto && `Tipo: ${attrs.tipoProduto}`,
+    attrs.modelo && `Modelo: ${attrs.modelo}`,
+    attrs.compatibilidade && `Compat.: ${attrs.compatibilidade}`,
+    attrs.quantidade && `Qtd.: ${attrs.quantidade}`,
+    attrs.cor && `Cor: ${attrs.cor}`,
+    attrs.tamanho && `Tam.: ${attrs.tamanho}`,
+    attrs.material && `Material: ${attrs.material}`,
+    attrs.voltagem && `Voltagem: ${attrs.voltagem}`
+  ].filter(Boolean);
+
+  return `
+    <div class="ai-quality-panel ${statusClass}">
+      <div class="ai-quality-head">
+        <span class="ai-status-pill ${statusClass}">${getAiStatusLabel(data.status)}</span>
+        <span class="ai-confidence">Confiança ${confidenceLabel}</span>
+        ${data.humanGate ? '<span class="ai-human-gate">Human gate</span>' : ''}
+      </div>
+      ${data.motivoHumanGate ? `<p class="ai-note">${escapeHtml(data.motivoHumanGate)}</p>` : ''}
+      ${problems.length ? `<p class="ai-note"><strong>Problemas:</strong> ${escapeHtml(problems.slice(0, 3).join('; '))}</p>` : ''}
+      ${attrSummary.length ? `<p class="ai-note"><strong>Atributos:</strong> ${escapeHtml(attrSummary.slice(0, 5).join(' | '))}</p>` : ''}
+      ${removedTerms.length ? `<p class="ai-note"><strong>Removidos:</strong> ${escapeHtml(removedTerms.join(', '))}</p>` : ''}
+      ${data.observacoes ? `<p class="ai-note">${escapeHtml(data.observacoes)}</p>` : ''}
+    </div>
+  `;
+}
+
+function setAiQualityPanel(productId, content) {
+  const panel = document.getElementById(`ai-quality-${productId}`);
+  if (panel) panel.innerHTML = content;
+}
+
 // CHECK CONNECTIONS & CREDENTIALS STATUS
 async function checkConnection() {
   try {
@@ -321,6 +378,9 @@ function renderProductsList() {
                       placeholder="Título sugerido pela IA aparecerá aqui..."
                       oninput="updateCharCounter('${item.id}')"></textarea>
             <div class="char-counter" id="char-counter-${item.id}">0 / 60</div>
+            <div id="ai-quality-${item.id}">
+              ${renderAiQualityPanel(item.aiRegistration)}
+            </div>
           </div>
         </td>
         <td>
@@ -420,6 +480,7 @@ async function optimizeProduct(productId) {
   const textarea = document.getElementById(`suggested-title-${productId}`);
   textarea.value = "Otimizando...";
   textarea.disabled = true;
+  setAiQualityPanel(productId, '<div class="ai-quality-panel loading">Analisando cadastro...</div>');
 
   try {
     const res = await fetch('/api/optimize', {
@@ -440,14 +501,24 @@ async function optimizeProduct(productId) {
     }
 
     const data = await res.json();
+    product.aiRegistration = data;
     textarea.value = data.tituloOtimizado || '';
     textarea.disabled = false;
     updateCharCounter(productId);
-    showToast(`Otimizado: "${product.descricao}" ➔ "${data.tituloOtimizado}"`, 'success');
+    setAiQualityPanel(productId, renderAiQualityPanel(data));
+
+    if (data.status === 'blocked') {
+      showToast('IA bloqueou este cadastro para revisão humana.', 'warning');
+    } else if (data.humanGate) {
+      showToast('Título sugerido com revisão humana recomendada.', 'warning');
+    } else {
+      showToast(`Cadastro otimizado: "${data.tituloOtimizado}"`, 'success');
+    }
   } catch (err) {
     console.error(err);
     textarea.value = "";
     textarea.disabled = false;
+    setAiQualityPanel(productId, '<div class="ai-quality-panel blocked">Falha ao gerar análise da IA.</div>');
     showToast(`Erro na otimização: ${err.message}`, 'error');
   }
 }
@@ -465,6 +536,12 @@ async function saveProduct(productId) {
   if (newTitle.length > 60) {
     showToast('O título excede o limite de 60 caracteres do Mercado Livre!', 'error');
     return;
+  }
+
+  const product = products.find(p => p.id == productId);
+  if (product?.aiRegistration?.humanGate) {
+    const shouldContinue = confirm('A IA marcou este cadastro para revisão humana. Deseja salvar mesmo assim?');
+    if (!shouldContinue) return;
   }
 
   suggestedTitleInput.disabled = true;
@@ -488,7 +565,6 @@ async function saveProduct(productId) {
 
     showToast('Produto atualizado com sucesso no Tiny ERP!', 'success');
     // Reload only this product info in local array list if needed
-    const product = products.find(p => p.id == productId);
     if (product) {
       product.descricao = newTitle;
       // Refresh display row

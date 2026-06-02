@@ -551,6 +551,77 @@ button {
   animation: shake 0.2s ease;
 }
 
+.ai-quality-panel {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.65rem;
+  background-color: rgba(255, 255, 255, 0.025);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+.ai-quality-panel.empty,
+.ai-quality-panel.loading {
+  color: var(--text-muted);
+  border-style: dashed;
+}
+.ai-quality-panel.ok {
+  border-color: rgba(0, 230, 118, 0.22);
+  background-color: rgba(0, 230, 118, 0.07);
+}
+.ai-quality-panel.needs-review {
+  border-color: rgba(255, 170, 0, 0.26);
+  background-color: rgba(255, 170, 0, 0.07);
+}
+.ai-quality-panel.blocked {
+  border-color: rgba(255, 51, 102, 0.26);
+  background-color: rgba(255, 51, 102, 0.07);
+}
+.ai-quality-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+.ai-status-pill,
+.ai-human-gate,
+.ai-confidence {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+.ai-status-pill.ok {
+  background-color: rgba(0, 230, 118, 0.14);
+  color: var(--success);
+}
+.ai-status-pill.needs-review {
+  background-color: rgba(255, 170, 0, 0.16);
+  color: var(--warning);
+}
+.ai-status-pill.blocked {
+  background-color: rgba(255, 51, 102, 0.15);
+  color: var(--danger);
+}
+.ai-confidence {
+  color: var(--text-secondary);
+  background-color: rgba(255, 255, 255, 0.05);
+}
+.ai-human-gate {
+  color: var(--warning);
+  border: 1px solid rgba(255, 170, 0, 0.24);
+}
+.ai-note {
+  margin: 0.25rem 0 0;
+  color: var(--text-secondary);
+}
+.ai-note strong {
+  color: var(--text-primary);
+}
+
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
   25% { transform: translateX(-4px); }

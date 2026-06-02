@@ -432,20 +432,208 @@ app.post('/api/optimize', async (req, res) => {
       `SKU: ${sku || 'Nao informado'}`,
       `Categoria: ${category || 'Nao informada'}`,
       'Crie um titulo comercial claro para Mercado Livre no Brasil.',
-      'Limite absoluto: 60 caracteres.'
+      'Limite absoluto: 60 caracteres.',
+      'Retorne diagnostico completo de qualidade, confianca e revisao humana conforme o schema.',
+      'Se confidence < 0.70, humanGate deve ser true.'
     ].filter(Boolean).join('\n\n');
+
+    const systemPrompt = [
+      'Você é um especialista sênior em cadastro de produtos para Mercado Livre Brasil.',
+      '',
+      'Sua tarefa é transformar dados brutos de produtos em cadastros comerciais claros, seguros e profissionais.',
+      '',
+      'Prioridades:',
+      '1. Identificar corretamente o produto.',
+      '2. Preservar atributos comerciais relevantes.',
+      '3. Criar um título objetivo, natural e vendável.',
+      '4. Respeitar o limite absoluto de 60 caracteres.',
+      '5. Remover ruídos como códigos internos, duplicações e termos operacionais.',
+      '6. Não inventar informações ausentes.',
+      '7. Sinalizar revisão humana quando o produto não puder ser identificado com segurança.',
+      '',
+      'Regras:',
+      '- Responda exclusivamente em JSON válido conforme o schema solicitado.',
+      '- Não escreva comentários fora do JSON.',
+      '- Não use markdown.',
+      '- Não invente marca, modelo, aplicação, compatibilidade, quantidade, medida, material, cor ou voltagem.',
+      '- Não use promessas exageradas.',
+      '- Não use termos promocionais sem base nos dados.',
+      '- Se o produto for ambíguo, incompleto, genérico ou parecer apenas um código interno, marque humanGate como true.',
+      '- Se a confiança for menor que 0.70, humanGate deve ser true.',
+      '- O título otimizado deve ter no máximo 60 caracteres.',
+      '- Quando algum atributo não for conhecido, retorne string vazia. Nunca retorne null.'
+    ].join('\n');
 
     const schema = {
       type: 'object',
       additionalProperties: false,
       properties: {
         tituloOtimizado: {
+          type: 'string'
+        },
+        status: {
           type: 'string',
-          description: 'Titulo otimizado para Mercado Livre com no maximo 60 caracteres.'
+          enum: ['ok', 'needs_review', 'blocked']
+        },
+        confidence: {
+          type: 'number',
+          minimum: 0,
+          maximum: 1
+        },
+        humanGate: {
+          type: 'boolean'
+        },
+        motivoHumanGate: {
+          type: 'string'
+        },
+        problemasDetectados: {
+          type: 'array',
+          items: {
+            type: 'string'
+          }
+        },
+        atributosIdentificados: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            marca: { type: 'string' },
+            tipoProduto: { type: 'string' },
+            modelo: { type: 'string' },
+            cor: { type: 'string' },
+            tamanho: { type: 'string' },
+            quantidade: { type: 'string' },
+            material: { type: 'string' },
+            compatibilidade: { type: 'string' },
+            voltagem: { type: 'string' },
+            outros: {
+              type: 'array',
+              items: { type: 'string' }
+            }
+          },
+          required: [
+            'marca',
+            'tipoProduto',
+            'modelo',
+            'cor',
+            'tamanho',
+            'quantidade',
+            'material',
+            'compatibilidade',
+            'voltagem',
+            'outros'
+          ]
+        },
+        termosRemovidos: {
+          type: 'array',
+          items: {
+            type: 'string'
+          }
+        },
+        observacoes: {
+          type: 'string'
         }
       },
-      required: ['tituloOtimizado']
+      required: [
+        'tituloOtimizado',
+        'status',
+        'confidence',
+        'humanGate',
+        'motivoHumanGate',
+        'problemasDetectados',
+        'atributosIdentificados',
+        'termosRemovidos',
+        'observacoes'
+      ]
     };
+
+    function normalizeString(value) {
+      return typeof value === 'string' ? value.trim() : '';
+    }
+
+    function normalizeStringArray(value) {
+      return Array.isArray(value)
+        ? value.map(item => normalizeString(item)).filter(Boolean)
+        : [];
+    }
+
+    function clampConfidence(value) {
+      const numericValue = Number(value);
+      if (!Number.isFinite(numericValue)) return 0;
+      return Math.min(1, Math.max(0, numericValue));
+    }
+
+    function trimTitleToLimit(value, limit = 60) {
+      const normalizedTitle = normalizeString(value).replace(/\s+/g, ' ');
+      if (normalizedTitle.length <= limit) return normalizedTitle;
+
+      const sliced = normalizedTitle.slice(0, limit).trim();
+      const lastSpace = sliced.lastIndexOf(' ');
+      return lastSpace > 35 ? sliced.slice(0, lastSpace).trim() : sliced;
+    }
+
+    function normalizeOptimization(rawData, model) {
+      const atributos = rawData?.atributosIdentificados || {};
+      const normalized = {
+        tituloOtimizado: normalizeString(rawData?.tituloOtimizado),
+        status: ['ok', 'needs_review', 'blocked'].includes(rawData?.status) ? rawData.status : 'needs_review',
+        confidence: clampConfidence(rawData?.confidence),
+        humanGate: Boolean(rawData?.humanGate),
+        motivoHumanGate: normalizeString(rawData?.motivoHumanGate),
+        problemasDetectados: normalizeStringArray(rawData?.problemasDetectados),
+        atributosIdentificados: {
+          marca: normalizeString(atributos.marca),
+          tipoProduto: normalizeString(atributos.tipoProduto),
+          modelo: normalizeString(atributos.modelo),
+          cor: normalizeString(atributos.cor),
+          tamanho: normalizeString(atributos.tamanho),
+          quantidade: normalizeString(atributos.quantidade),
+          material: normalizeString(atributos.material),
+          compatibilidade: normalizeString(atributos.compatibilidade),
+          voltagem: normalizeString(atributos.voltagem),
+          outros: normalizeStringArray(atributos.outros)
+        },
+        termosRemovidos: normalizeStringArray(rawData?.termosRemovidos),
+        observacoes: normalizeString(rawData?.observacoes),
+        modelo: model
+      };
+
+      if (normalized.tituloOtimizado.length > 60) {
+        normalized.tituloOtimizado = trimTitleToLimit(normalized.tituloOtimizado);
+        normalized.humanGate = true;
+        normalized.problemasDetectados.push('Título retornado acima de 60 caracteres e ajustado pelo servidor.');
+      }
+
+      if (normalized.confidence < 0.70) {
+        normalized.humanGate = true;
+      }
+
+      if (normalized.humanGate && normalized.status !== 'blocked') {
+        normalized.status = 'needs_review';
+      }
+
+      if (normalized.status === 'ok' && normalized.confidence < 0.70) {
+        normalized.status = 'needs_review';
+      }
+
+      if (!normalized.tituloOtimizado) {
+        normalized.status = 'blocked';
+        normalized.humanGate = true;
+        normalized.problemasDetectados.push('A IA não gerou um título seguro.');
+      }
+
+      if (normalized.status === 'blocked' && !normalized.motivoHumanGate) {
+        normalized.motivoHumanGate = 'Produto impossível de identificar com segurança a partir dos dados disponíveis.';
+      }
+
+      if (normalized.humanGate && !normalized.motivoHumanGate) {
+        normalized.motivoHumanGate = 'Revisão humana recomendada antes de salvar no Tiny.';
+      }
+
+      normalized.problemasDetectados = [...new Set(normalized.problemasDetectados)];
+      normalized.termosRemovidos = [...new Set(normalized.termosRemovidos)];
+
+      return normalized;
+    }
 
     async function requestOptimization(model) {
       const openAiResponse = await fetch('https://api.openai.com/v1/responses', {
@@ -459,14 +647,14 @@ app.post('/api/optimize', async (req, res) => {
           input: [
             {
               role: 'system',
-              content: 'Voce otimiza titulos de produtos para Mercado Livre. Responda apenas pelo schema JSON. Preserve informacoes importantes, remova codigos internos, evite promessas exageradas.'
+              content: systemPrompt
             },
             {
               role: 'user',
               content: promptText
             }
           ],
-          max_output_tokens: 160,
+          max_output_tokens: 900,
           text: {
             format: {
               type: 'json_schema',
@@ -494,16 +682,7 @@ app.post('/api/optimize', async (req, res) => {
       }
 
       const optimizedData = JSON.parse(candidateText.trim());
-      const optimizedTitle = optimizedData.tituloOtimizado?.trim();
-
-      if (!optimizedTitle || optimizedTitle.length > 60) {
-        throw new Error(`OpenAI ${model}: titulo invalido ou acima de 60 caracteres.`);
-      }
-
-      return {
-        tituloOtimizado: optimizedTitle,
-        modelo: model
-      };
+      return normalizeOptimization(optimizedData, model);
     }
 
     const models = [...new Set([config.openAiFastModel, config.openAiQualityModel].filter(Boolean))];
