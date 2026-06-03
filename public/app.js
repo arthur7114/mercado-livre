@@ -73,6 +73,13 @@ function getAiStatusLabel(status) {
   return 'Revisar';
 }
 
+function getGenerationSourceLabel(source) {
+  if (source === 'ai_fast') return 'IA rápida';
+  if (source === 'ai_quality') return 'IA qualidade';
+  if (source === 'fallback') return 'Fallback seguro';
+  return 'IA';
+}
+
 function renderAiQualityPanel(data) {
   if (!data) return '<div class="ai-quality-panel empty">Aguardando análise da IA.</div>';
 
@@ -80,32 +87,39 @@ function renderAiQualityPanel(data) {
   const confidenceLabel = `${Math.round(confidence * 100)}%`;
   const statusClass = data.status === 'ok' ? 'ok' : data.status === 'blocked' ? 'blocked' : 'needs-review';
   const problems = Array.isArray(data.problemasDetectados) ? data.problemasDetectados : [];
-  const removedTerms = Array.isArray(data.termosRemovidos) ? data.termosRemovidos : [];
+  const usedAttributes = Array.isArray(data.usedAttributes) ? data.usedAttributes : [];
+  const qualityFlags = Array.isArray(data.qualityFlags) ? data.qualityFlags : [];
   const attrs = data.atributosIdentificados || {};
   const attrSummary = [
-    attrs.marca && `Marca: ${attrs.marca}`,
-    attrs.tipoProduto && `Tipo: ${attrs.tipoProduto}`,
-    attrs.modelo && `Modelo: ${attrs.modelo}`,
-    attrs.compatibilidade && `Compat.: ${attrs.compatibilidade}`,
-    attrs.quantidade && `Qtd.: ${attrs.quantidade}`,
-    attrs.cor && `Cor: ${attrs.cor}`,
-    attrs.tamanho && `Tam.: ${attrs.tamanho}`,
-    attrs.material && `Material: ${attrs.material}`,
-    attrs.voltagem && `Voltagem: ${attrs.voltagem}`
+    attrs.tipoProduto,
+    attrs.marca,
+    attrs.material,
+    attrs.modelo,
+    attrs.tamanho,
+    attrs.cor,
+    attrs.quantidade,
+    attrs.compatibilidade,
+    attrs.voltagem
   ].filter(Boolean);
+  const usedSummary = usedAttributes.length ? usedAttributes : attrSummary;
+  const attention = problems.slice(0, 2).join('; ') || qualityFlags.slice(0, 3).join(', ');
+  const sourceLabel = getGenerationSourceLabel(data.generationSource);
+  const fullDetails = [
+    data.motivoHumanGate,
+    problems.join('; '),
+    data.observacoes
+  ].filter(Boolean).join(' | ');
 
   return `
-    <div class="ai-quality-panel ${statusClass}">
+    <div class="ai-quality-panel ${statusClass}" title="${escapeHtml(fullDetails)}">
       <div class="ai-quality-head">
         <span class="ai-status-pill ${statusClass}">${getAiStatusLabel(data.status)}</span>
         <span class="ai-confidence">Confiança ${confidenceLabel}</span>
         ${data.humanGate ? '<span class="ai-human-gate">Human gate</span>' : ''}
       </div>
-      ${data.motivoHumanGate ? `<p class="ai-note">${escapeHtml(data.motivoHumanGate)}</p>` : ''}
-      ${problems.length ? `<p class="ai-note"><strong>Problemas:</strong> ${escapeHtml(problems.slice(0, 3).join('; '))}</p>` : ''}
-      ${attrSummary.length ? `<p class="ai-note"><strong>Atributos:</strong> ${escapeHtml(attrSummary.slice(0, 5).join(' | '))}</p>` : ''}
-      ${removedTerms.length ? `<p class="ai-note"><strong>Removidos:</strong> ${escapeHtml(removedTerms.join(', '))}</p>` : ''}
-      ${data.observacoes ? `<p class="ai-note">${escapeHtml(data.observacoes)}</p>` : ''}
+      ${usedSummary.length ? `<p class="ai-note"><strong>Usado:</strong> ${escapeHtml(usedSummary.slice(0, 6).join(', '))}</p>` : ''}
+      ${attention ? `<p class="ai-note"><strong>Atenção:</strong> ${escapeHtml(attention)}</p>` : ''}
+      <p class="ai-note"><strong>Fonte:</strong> ${escapeHtml(sourceLabel)}</p>
     </div>
   `;
 }

@@ -1,6 +1,16 @@
 const crypto = require('crypto');
 const express = require('express');
 const path = require('path');
+const {
+  applyDictionary,
+  normalizeRawTitle,
+  extractTitleAttributes,
+  buildDeterministicTitle,
+  validateAiTitle,
+  normalizeAiRegistration,
+  buildFallbackRegistration,
+  isHumanGateRequired
+} = require('./lib/titleOptimizer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -470,96 +480,80 @@ app.post('/api/optimize', async (req, res) => {
       return res.status(400).json({ error: 'O título do produto é obrigatório.' });
     }
 
-    let dictionaryInstructions = '';
-    if (Array.isArray(dictionary) && dictionary.length > 0) {
-      dictionaryInstructions = 'Aqui está uma lista de termos internos específicos com seus significados ou ações desejadas:\n';
-      dictionary.forEach(entry => {
-        if (!entry?.from) return;
-
-        if (entry.to && entry.to.trim() !== '') {
-          dictionaryInstructions += `- Substitua o termo "${entry.from}" por "${entry.to}"\n`;
-        } else {
-          dictionaryInstructions += `- Remova o termo "${entry.from}" completamente (é um código interno)\n`;
-        }
-      });
-    }
-
-    const promptText = [
-      basePrompt,
-      dictionaryInstructions,
-      `Produto: ${title}`,
-      `SKU: ${sku || 'Nao informado'}`,
-      `Categoria: ${category || 'Nao informada'}`,
-      'Crie um titulo comercial claro para Mercado Livre no Brasil.',
-      'Limite absoluto: 60 caracteres.',
-      'Nao copie o titulo original sem melhorar. Reordene, limpe ruido e remova termos sem valor comercial quando houver oportunidade segura.',
-      'O titulo nao pode ficar generico. Se houver marca, modelo, referencia, material, cor, tamanho, quantidade ou compatibilidade no original, preserve os atributos que diferenciam o produto.',
-      'Nao remova modelo ou referencia como FB-281 P quando isso ajuda a diferenciar o item para o comprador.',
-      'Se o melhor titulo possivel for igual ao original, explique em observacoes e marque needs_review.',
-      'Retorne diagnostico completo de qualidade, confianca e revisao humana conforme o schema.',
-      'Se confidence < 0.70, humanGate deve ser true.'
-    ].filter(Boolean).join('\n\n');
+    const dictionaryResult = applyDictionary(title, dictionary);
+    const normalizedResult = normalizeRawTitle(dictionaryResult.title);
+    const attributes = extractTitleAttributes(dictionaryResult.title, {
+      normalizedTitle: normalizedResult.normalizedTitle,
+      removedTerms: [...dictionaryResult.removedTerms, ...normalizedResult.removedTerms]
+    });
+    const fallbackTitle = buildDeterministicTitle({
+      title: dictionaryResult.title,
+      attributes
+    });
+    const context = {
+      originalTitle: title,
+      dictionaryTitle: dictionaryResult.title,
+      normalizedTitle: normalizedResult.normalizedTitle,
+      sku: sku || '',
+      category: category || '',
+      dictionaryText: Array.isArray(dictionary)
+        ? dictionary.map(entry => `${entry?.from || ''} ${entry?.to || ''}`).join(' ')
+        : '',
+      attributes,
+      fallbackTitle,
+      removedTerms: [...dictionaryResult.removedTerms, ...normalizedResult.removedTerms],
+      humanGate: isHumanGateRequired(attributes, dictionaryResult.title)
+    };
 
     const systemPrompt = [
-      'Você é um especialista sênior em cadastro de produtos para Mercado Livre Brasil.',
-      '',
-      'Sua tarefa é transformar dados brutos de produtos em cadastros comerciais claros, seguros e profissionais.',
-      '',
-      'Prioridades:',
-      '1. Identificar corretamente o produto.',
-      '2. Preservar atributos comerciais relevantes.',
-      '3. Criar um título objetivo, natural e vendável.',
-      '4. Respeitar o limite absoluto de 60 caracteres.',
-      '5. Remover ruídos como códigos internos, duplicações e termos operacionais.',
-      '6. Não inventar informações ausentes.',
-      '7. Sinalizar revisão humana quando o produto não puder ser identificado com segurança.',
-      '',
-      'Regras:',
-      '- Responda exclusivamente em JSON válido conforme o schema solicitado.',
-      '- Não escreva comentários fora do JSON.',
-      '- Não use markdown.',
-      '- Não invente marca, modelo, aplicação, compatibilidade, quantidade, medida, material, cor ou voltagem.',
-      '- Não use promessas exageradas.',
-      '- Não use termos promocionais sem base nos dados.',
-      '- Se o produto for ambíguo, incompleto, genérico ou parecer apenas um código interno, marque humanGate como true.',
-      '- Se a confiança for menor que 0.70, humanGate deve ser true.',
-      '- O título otimizado deve ter no máximo 60 caracteres.',
-      '- Quando algum atributo não for conhecido, retorne string vazia. Nunca retorne null.',
-      '- Não mantenha códigos ou referências internas no título comercial quando eles não ajudarem o comprador.',
-      '- Preserve códigos de modelo, referência de produto e marca quando eles diferenciam o item vendido.',
-      '- Evite títulos genéricos como "Bolsa Feminina em P.U." quando houver modelo, referência, marca ou outro atributo distintivo no original.',
-      '- Um bom título deve combinar tipo de produto + atributo distintivo disponível, por exemplo marca/modelo/material/cor/tamanho/quantidade/compatibilidade.',
-      '- Se o título original tiver palavras soltas como estilo, novo, cadastro, teste, ml ou termos operacionais sem função comercial, remova-as.',
-      '- Se o título otimizado ficar igual ao original, status deve ser needs_review e observacoes deve explicar por que não houve melhoria segura.'
+      'Você monta títulos profissionais para Mercado Livre Brasil usando apenas os dados fornecidos.',
+      'A IA é uma montadora supervisionada: não descubra, não enriqueça e não invente atributos.',
+      'Use somente atributos permitidos no JSON do usuário.',
+      'O título final deve ter no máximo 60 caracteres.',
+      'Prioridade: tipo do produto + marca + atributo distintivo + material + modelo/referência + tamanho/cor/quantidade.',
+      'Não adicione público-alvo, ocasião, uso, ambiente ou aplicação se isso não estiver nos dados.',
+      'Não use termos promocionais como premium, top, melhor, perfeito ou garantido.',
+      'Preserve modelo, referência, material e tamanho quando existirem.',
+      'Prefira poucas preposições e preserve siglas como PU, FB, EST, P, M, G.',
+      'Exemplos corretos:',
+      '- Bolsa Feminina Em P.U. Moderna FB-282 M -> Bolsa Feminina Moderna PU FB-282 M',
+      '- Estojo Duplo Fb Est 300 -> Estojo Duplo FB EST 300',
+      'Exemplo proibido: adicionar "para escolares e escritório" se isso não aparecer nos dados.',
+      'Responda exclusivamente JSON válido conforme o schema. Não use markdown.'
     ].join('\n');
+
+    const userPrompt = JSON.stringify({
+      tarefa: 'Monte o melhor titulo Mercado Livre usando somente os atributos permitidos.',
+      dadosBrutos: {
+        tituloOriginal: title,
+        tituloAposDicionario: dictionaryResult.title,
+        sku: sku || '',
+        categoria: category || ''
+      },
+      atributosPermitidos: attributes,
+      fallbackSeguro: fallbackTitle,
+      termosRemovidosLocalmente: context.removedTerms,
+      regrasUsuario: basePrompt || '',
+      restricoes: [
+        'Nao inventar informacao ausente.',
+        'Nao adicionar publico, uso, ambiente ou aplicacao sem dado explicito.',
+        'Nao remover modelo/referencia/material/tamanho existentes.',
+        'Titulo maximo de 60 caracteres.'
+      ]
+    });
 
     const schema = {
       type: 'object',
       additionalProperties: false,
       properties: {
-        tituloOtimizado: {
-          type: 'string'
-        },
-        status: {
-          type: 'string',
-          enum: ['ok', 'needs_review', 'blocked']
-        },
-        confidence: {
-          type: 'number',
-          minimum: 0,
-          maximum: 1
-        },
-        humanGate: {
-          type: 'boolean'
-        },
-        motivoHumanGate: {
-          type: 'string'
-        },
+        tituloOtimizado: { type: 'string' },
+        status: { type: 'string', enum: ['ok', 'needs_review', 'blocked'] },
+        confidence: { type: 'number', minimum: 0, maximum: 1 },
+        humanGate: { type: 'boolean' },
+        motivoHumanGate: { type: 'string' },
         problemasDetectados: {
           type: 'array',
-          items: {
-            type: 'string'
-          }
+          items: { type: 'string' }
         },
         atributosIdentificados: {
           type: 'object',
@@ -594,12 +588,17 @@ app.post('/api/optimize', async (req, res) => {
         },
         termosRemovidos: {
           type: 'array',
-          items: {
-            type: 'string'
-          }
+          items: { type: 'string' }
         },
-        observacoes: {
-          type: 'string'
+        observacoes: { type: 'string' },
+        generationSource: { type: 'string', enum: ['ai_fast', 'ai_quality', 'fallback'] },
+        qualityFlags: {
+          type: 'array',
+          items: { type: 'string' }
+        },
+        usedAttributes: {
+          type: 'array',
+          items: { type: 'string' }
         }
       },
       required: [
@@ -611,155 +610,14 @@ app.post('/api/optimize', async (req, res) => {
         'problemasDetectados',
         'atributosIdentificados',
         'termosRemovidos',
-        'observacoes'
+        'observacoes',
+        'generationSource',
+        'qualityFlags',
+        'usedAttributes'
       ]
     };
 
-    function normalizeString(value) {
-      return typeof value === 'string' ? value.trim() : '';
-    }
-
-    function normalizeStringArray(value) {
-      return Array.isArray(value)
-        ? value.map(item => normalizeString(item)).filter(Boolean)
-        : [];
-    }
-
-    function clampConfidence(value) {
-      const numericValue = Number(value);
-      if (!Number.isFinite(numericValue)) return 0;
-      return Math.min(1, Math.max(0, numericValue));
-    }
-
-    function trimTitleToLimit(value, limit = 60) {
-      const normalizedTitle = normalizeString(value).replace(/\s+/g, ' ');
-      if (normalizedTitle.length <= limit) return normalizedTitle;
-
-      const sliced = normalizedTitle.slice(0, limit).trim();
-      const lastSpace = sliced.lastIndexOf(' ');
-      return lastSpace > 35 ? sliced.slice(0, lastSpace).trim() : sliced;
-    }
-
-    function normalizeForComparison(value) {
-      return normalizeString(value)
-        .normalize('NFKD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^\p{L}\p{N}]+/gu, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .toLowerCase();
-    }
-
-    function containsNormalizedToken(haystack, needle) {
-      const normalizedHaystack = normalizeForComparison(haystack);
-      const normalizedNeedle = normalizeForComparison(needle);
-      if (!normalizedNeedle) return true;
-
-      return normalizedNeedle
-        .split(' ')
-        .filter(token => token.length > 1)
-        .every(token => normalizedHaystack.includes(token));
-    }
-
-    function markNeedsReview(normalized, problem, observation) {
-      normalized.status = 'needs_review';
-      normalized.humanGate = true;
-      normalized.problemasDetectados.push(problem);
-
-      if (observation && !normalized.observacoes) {
-        normalized.observacoes = observation;
-      }
-    }
-
-    function normalizeOptimization(rawData, model) {
-      const atributos = rawData?.atributosIdentificados || {};
-      const normalized = {
-        tituloOtimizado: normalizeString(rawData?.tituloOtimizado),
-        status: ['ok', 'needs_review', 'blocked'].includes(rawData?.status) ? rawData.status : 'needs_review',
-        confidence: clampConfidence(rawData?.confidence),
-        humanGate: Boolean(rawData?.humanGate),
-        motivoHumanGate: normalizeString(rawData?.motivoHumanGate),
-        problemasDetectados: normalizeStringArray(rawData?.problemasDetectados),
-        atributosIdentificados: {
-          marca: normalizeString(atributos.marca),
-          tipoProduto: normalizeString(atributos.tipoProduto),
-          modelo: normalizeString(atributos.modelo),
-          cor: normalizeString(atributos.cor),
-          tamanho: normalizeString(atributos.tamanho),
-          quantidade: normalizeString(atributos.quantidade),
-          material: normalizeString(atributos.material),
-          compatibilidade: normalizeString(atributos.compatibilidade),
-          voltagem: normalizeString(atributos.voltagem),
-          outros: normalizeStringArray(atributos.outros)
-        },
-        termosRemovidos: normalizeStringArray(rawData?.termosRemovidos),
-        observacoes: normalizeString(rawData?.observacoes),
-        modelo: model
-      };
-
-      if (normalized.tituloOtimizado.length > 60) {
-        normalized.tituloOtimizado = trimTitleToLimit(normalized.tituloOtimizado);
-        normalized.humanGate = true;
-        normalized.problemasDetectados.push('Título retornado acima de 60 caracteres e ajustado pelo servidor.');
-      }
-
-      if (normalized.confidence < 0.70) {
-        normalized.humanGate = true;
-      }
-
-      if (normalized.humanGate && normalized.status !== 'blocked') {
-        normalized.status = 'needs_review';
-      }
-
-      if (normalized.status === 'ok' && normalized.confidence < 0.70) {
-        normalized.status = 'needs_review';
-      }
-
-      if (!normalized.tituloOtimizado) {
-        normalized.status = 'blocked';
-        normalized.humanGate = true;
-        normalized.problemasDetectados.push('A IA não gerou um título seguro.');
-      }
-
-      if (normalizeForComparison(normalized.tituloOtimizado) === normalizeForComparison(title)) {
-        markNeedsReview(
-          normalized,
-          'Título otimizado ficou igual ao título original.',
-          'A IA não encontrou uma melhoria segura para o título com os dados disponíveis.'
-        );
-      }
-
-      if (normalized.atributosIdentificados.modelo && !containsNormalizedToken(normalized.tituloOtimizado, normalized.atributosIdentificados.modelo)) {
-        markNeedsReview(
-          normalized,
-          'Título ficou genérico por remover o modelo identificado.',
-          'Preserve o modelo quando ele diferencia o produto.'
-        );
-      }
-
-      if (normalized.atributosIdentificados.marca && !containsNormalizedToken(normalized.tituloOtimizado, normalized.atributosIdentificados.marca)) {
-        markNeedsReview(
-          normalized,
-          'Título ficou genérico por remover a marca identificada.',
-          'Preserve a marca quando ela aparece nos dados do produto.'
-        );
-      }
-
-      if (normalized.status === 'blocked' && !normalized.motivoHumanGate) {
-        normalized.motivoHumanGate = 'Produto impossível de identificar com segurança a partir dos dados disponíveis.';
-      }
-
-      if (normalized.humanGate && !normalized.motivoHumanGate) {
-        normalized.motivoHumanGate = 'Revisão humana recomendada antes de salvar no Tiny.';
-      }
-
-      normalized.problemasDetectados = [...new Set(normalized.problemasDetectados)];
-      normalized.termosRemovidos = [...new Set(normalized.termosRemovidos)];
-
-      return normalized;
-    }
-
-    async function requestOptimization(model) {
+    async function requestOptimization(model, source) {
       const openAiResponse = await fetch('https://api.openai.com/v1/responses', {
         method: 'POST',
         headers: {
@@ -775,7 +633,7 @@ app.post('/api/optimize', async (req, res) => {
             },
             {
               role: 'user',
-              content: promptText
+              content: userPrompt
             }
           ],
           max_output_tokens: 900,
@@ -806,32 +664,42 @@ app.post('/api/optimize', async (req, res) => {
       }
 
       const optimizedData = JSON.parse(candidateText.trim());
-      return normalizeOptimization(optimizedData, model);
+      const validation = validateAiTitle(optimizedData, context);
+      return {
+        registration: normalizeAiRegistration(optimizedData, context, source, validation),
+        validation
+      };
     }
 
     const models = [...new Set([config.openAiFastModel, config.openAiQualityModel].filter(Boolean))];
     let lastError;
+    let lastRegistration;
 
     for (let index = 0; index < models.length; index += 1) {
       const model = models[index];
+      const source = index === 0 ? 'ai_fast' : 'ai_quality';
       try {
-        const optimization = await requestOptimization(model);
-        const unchangedTitle = normalizeForComparison(optimization.tituloOtimizado) === normalizeForComparison(title);
-        const tooGenericTitle = optimization.problemasDetectados.some(problem => problem.includes('Título ficou genérico'));
+        const { registration, validation } = await requestOptimization(model, source);
         const hasFallbackModel = index < models.length - 1;
+        lastRegistration = registration;
 
-        if ((unchangedTitle || tooGenericTitle) && hasFallbackModel) {
-          throw new Error(`OpenAI ${model}: titulo sem melhoria suficiente; tentando modelo de qualidade.`);
+        if (!validation.valid && hasFallbackModel) {
+          throw new Error(`OpenAI ${model}: titulo reprovado nos guardrails (${validation.flags.join(', ')}).`);
         }
 
-        return res.json(optimization);
+        if (validation.valid) {
+          return res.json(registration);
+        }
       } catch (error) {
         lastError = error;
         console.warn(error.message);
       }
     }
 
-    throw lastError || new Error('A IA não gerou conteúdo válido.');
+    const fallbackProblems = lastRegistration?.problemasDetectados?.length
+      ? lastRegistration.problemasDetectados
+      : [lastError?.message || 'A IA não gerou conteúdo válido nos guardrails.'];
+    return res.json(buildFallbackRegistration(context, 'fallback', fallbackProblems));
   } catch (error) {
     console.error('Erro na otimização:', error);
     res.status(500).json({ error: `Falha na otimização: ${error.message}` });
