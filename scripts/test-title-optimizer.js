@@ -4,6 +4,7 @@ const {
   extractTitleAttributes,
   buildDeterministicTitle,
   validateAiTitle,
+  normalizeAiRegistration,
   isHumanGateRequired
 } = require('../lib/titleOptimizer');
 
@@ -49,6 +50,11 @@ assertFallbackTitle(
   'Estojo Duplo FB EST 300'
 );
 
+assertFallbackTitle(
+  'Sacola De Viagem Fb 05',
+  'Sacola De Viagem FB 05'
+);
+
 {
   const context = buildContext('Produto Teste ABC-998');
   assert.strictEqual(context.humanGate, true, 'Produto Teste ABC-998 deve exigir revisão humana');
@@ -79,6 +85,27 @@ assertFallbackTitle(
 
   assert.strictEqual(validation.valid, true, 'Título válido não deveria reprovar');
   assert.deepStrictEqual(validation.termosRemovidos, ['Em'], 'Não deve reportar removido que ainda aparece');
+}
+
+{
+  const context = buildContext('Bolsa Feminina em P.U. FB-281 P - Modave Estilo');
+  const validation = validateAiTitle({
+    tituloOtimizado: 'Bolsa Feminina Modave PU FB-281 P',
+    termosRemovidos: ['Estilo']
+  }, context);
+  const registration = normalizeAiRegistration({
+    tituloOtimizado: 'Bolsa Feminina Modave PU FB-281 P',
+    status: 'ok',
+    confidence: 0.95,
+    humanGate: true,
+    problemasDetectados: ['preciso, consistente'],
+    termosRemovidos: ['Estilo']
+  }, context, 'ai_fast', validation);
+
+  assert.strictEqual(validation.valid, true, 'Título do print deve passar nos guardrails');
+  assert.strictEqual(registration.status, 'ok', 'Human gate indevido da IA deve ser corrigido');
+  assert.strictEqual(registration.humanGate, false, 'Não deve mostrar human gate sem problema real');
+  assert.deepStrictEqual(registration.problemasDetectados, [], 'Não deve mostrar termos positivos como problema');
 }
 
 console.log('title optimizer tests passed');
