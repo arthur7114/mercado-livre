@@ -3,6 +3,7 @@ node_modules/
 .env.*
 !.env.example
 storage.json
+.data/
 .DS_Store
 .vercel/
 npm-debug.log*

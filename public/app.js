@@ -200,9 +200,61 @@ async function loadSettings() {
 
     // Render Dictionary list
     renderDictionary();
+    loadOptimizerMemory();
   } catch (err) {
     console.error('Erro ao carregar configurações:', err);
     showToast('Falha ao carregar configurações locais.', 'error');
+  }
+}
+
+async function loadOptimizerMemory() {
+  const summary = document.getElementById('memory-summary');
+  const list = document.getElementById('memory-list');
+  if (!summary || !list) return;
+
+  summary.innerText = 'Carregando memória...';
+  list.innerHTML = '';
+
+  try {
+    const res = await fetch('/api/memory?limit=6', { cache: 'no-store' });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Falha ao carregar memória');
+    }
+
+    const data = await res.json();
+    const storageLabel = data.storage?.persistent ? 'persistente' : 'temporária';
+    summary.innerText = `${data.total || 0} exemplos aceitos • memória ${storageLabel}`;
+    list.innerHTML = Array.isArray(data.examples) && data.examples.length > 0
+      ? data.examples.map(example => `
+          <div class="memory-item">
+            <span class="memory-original">${escapeHtml(example.originalTitle)}</span>
+            <span class="memory-arrow">→</span>
+            <span class="memory-optimized">${escapeHtml(example.optimizedTitle)}</span>
+          </div>
+        `).join('')
+      : '<div class="memory-empty">Nenhum exemplo salvo ainda.</div>';
+  } catch (err) {
+    summary.innerText = 'Falha ao carregar memória';
+    list.innerHTML = `<div class="memory-empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function clearOptimizerMemory() {
+  const shouldClear = confirm('Limpar todos os exemplos aceitos da memória da IA?');
+  if (!shouldClear) return;
+
+  try {
+    const res = await fetch('/api/memory', { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || 'Falha ao limpar memória');
+    }
+
+    showToast('Memória da IA limpa.', 'success');
+    loadOptimizerMemory();
+  } catch (err) {
+    showToast(`Erro ao limpar memória: ${err.message}`, 'error');
   }
 }
 
@@ -599,6 +651,12 @@ async function saveProduct(productId) {
         descricao: newTitle,
         descricaoComplementar: newDescription,
         mlOtimizado: true,
+        learning: {
+          generationSource: product?.aiRegistration?.generationSource || '',
+          status: product?.aiRegistration?.status || '',
+          humanGate: Boolean(product?.aiRegistration?.humanGate),
+          usedAttributes: product?.aiRegistration?.usedAttributes || []
+        },
         seo: {
           titulo: newTitle,
           descricao: newDescription
@@ -617,6 +675,7 @@ async function saveProduct(productId) {
       product.descricao = newTitle;
       product.descricaoComplementar = newDescription;
       product.mlOtimizado = true;
+      loadOptimizerMemory();
       // Refresh display row
       const row = document.getElementById(`product-row-${productId}`);
       row.querySelector('.erp-title-container').innerHTML = highlightInternalTerms(newTitle);
@@ -671,6 +730,7 @@ async function bulkSave() {
     const descriptionInput = document.getElementById(`suggested-description-${id}`);
     const val = input ? input.value.trim() : '';
     const descriptionVal = descriptionInput ? descriptionInput.value.trim() : '';
+    const product = products.find(p => p.id == id);
     
     if (val && val !== "Otimizando..." && val.length <= 60) {
       try {
@@ -681,6 +741,12 @@ async function bulkSave() {
             descricao: val,
             descricaoComplementar: descriptionVal,
             mlOtimizado: true,
+            learning: {
+              generationSource: product?.aiRegistration?.generationSource || '',
+              status: product?.aiRegistration?.status || '',
+              humanGate: Boolean(product?.aiRegistration?.humanGate),
+              usedAttributes: product?.aiRegistration?.usedAttributes || []
+            },
             seo: {
               titulo: val,
               descricao: descriptionVal
@@ -691,7 +757,6 @@ async function bulkSave() {
         if (res.ok) {
           savedCount++;
           // Update local product name
-          const product = products.find(p => p.id == id);
           if (product) {
             product.descricao = val;
             product.descricaoComplementar = descriptionVal;
@@ -713,6 +778,10 @@ async function bulkSave() {
         errorCount++;
       }
     }
+  }
+
+  if (savedCount > 0) {
+    loadOptimizerMemory();
   }
 
   showToast(`Processamento concluído: ${savedCount} salvos, ${errorCount} erros.`, savedCount > 0 ? 'success' : 'error');

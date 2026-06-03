@@ -133,6 +133,7 @@
             </div>
           </div>
         </div>
+
       </section>
 
       <!-- TAB: RULES -->
@@ -176,6 +177,22 @@
               <textarea id="ai-base-prompt" rows="15" placeholder="Instruções para o modelo..."></textarea>
             </div>
             <button class="btn-primary" onclick="savePrompt()"><span class="btn-icon">💾</span> Salvar Prompt</button>
+          </div>
+        </div>
+
+        <div class="workspace-card">
+          <div class="memory-header">
+            <div>
+              <h2 class="section-title">Memória da IA</h2>
+              <p class="section-subtitle" id="memory-summary">Carregando memória...</p>
+            </div>
+            <div class="memory-actions">
+              <button class="btn-secondary" onclick="loadOptimizerMemory()">Atualizar</button>
+              <button class="btn-danger" onclick="clearOptimizerMemory()">Limpar</button>
+            </div>
+          </div>
+          <div id="memory-list" class="memory-list">
+            <!-- Dynamic memory examples -->
           </div>
         </div>
       </section>

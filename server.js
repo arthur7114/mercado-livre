@@ -12,6 +12,12 @@ const {
   buildFallbackRegistration,
   isHumanGateRequired
 } = require('./lib/titleOptimizer');
+const {
+  addOptimizationMemory,
+  getMemorySnapshot,
+  buildMemoryPrompt,
+  clearOptimizationMemory
+} = require('./lib/optimizerMemory');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -251,6 +257,23 @@ async function enrichProductsWithMlOptimizedFlag(items, token) {
   }));
 }
 
+async function rememberAcceptedOptimization(productId, currentProduct, updates) {
+  if (!updates.mlOtimizado) return;
+
+  await addOptimizationMemory({
+    productId,
+    sku: currentProduct.sku,
+    category: currentProduct.categoria?.nome || '',
+    originalTitle: currentProduct.descricao,
+    optimizedTitle: updates.descricao,
+    optimizedDescription: updates.descricaoComplementar || updates.seo?.descricao || '',
+    source: updates.learning?.generationSource || '',
+    status: updates.learning?.status || '',
+    humanGate: Boolean(updates.learning?.humanGate),
+    usedAttributes: updates.learning?.usedAttributes || []
+  });
+}
+
 async function checkAndRefreshToken(req, res) {
   const config = getEnvConfig(req);
   const session = readTokenSession(req);
@@ -304,6 +327,23 @@ async function checkAndRefreshToken(req, res) {
 
 app.get('/api/settings', (req, res) => {
   res.json(getPublicSettings(req));
+});
+
+app.get('/api/memory', async (req, res) => {
+  try {
+    const limit = Number.parseInt(req.query.limit, 10) || 20;
+    res.json(await getMemorySnapshot({ limit }));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/memory', async (req, res) => {
+  try {
+    res.json(await clearOptimizationMemory());
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.post('/api/settings', (req, res) => {
@@ -547,10 +587,12 @@ app.put('/api/products/:id', async (req, res) => {
     }
 
     if (putResponse.status === 204) {
+      await rememberAcceptedOptimization(productId, currentProduct, updates);
       return res.json({ success: true, message: 'Produto atualizado com sucesso (No Content)' });
     }
 
     const data = await putResponse.json();
+    await rememberAcceptedOptimization(productId, currentProduct, updates);
     res.json({ success: true, data });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -570,6 +612,8 @@ app.post('/api/optimize', async (req, res) => {
       return res.status(400).json({ error: 'O título do produto é obrigatório.' });
     }
 
+    const memorySnapshot = await getMemorySnapshot({ limit: 8 });
+    const memoryPrompt = buildMemoryPrompt(memorySnapshot);
     const dictionaryResult = applyDictionary(title, dictionary);
     const normalizedResult = normalizeRawTitle(dictionaryResult.title);
     const attributes = extractTitleAttributes(dictionaryResult.title, {
@@ -616,6 +660,8 @@ app.post('/api/optimize', async (req, res) => {
       '- Estojo Duplo Fb Est 300 -> Estojo Duplo FB EST 300',
       'Exemplo proibido: adicionar "para escolares e escritório" se isso não aparecer nos dados.',
       'Na descrição, não cite uso, público, ocasião ou benefícios que não estejam nos dados.',
+      'Use a memória aprendida apenas como referência de estilo e padrões aceitos.',
+      'A memória não autoriza adicionar atributo ausente no cadastro atual.',
       'Responda exclusivamente JSON válido conforme o schema. Não use markdown.'
     ].join('\n');
 
@@ -631,13 +677,15 @@ app.post('/api/optimize', async (req, res) => {
       fallbackSeguro: fallbackTitle,
       descricaoFallbackSegura: fallbackDescription,
       termosRemovidosLocalmente: context.removedTerms,
+      memoriaAprendida: memoryPrompt || 'Sem exemplos aceitos ainda.',
       regrasUsuario: basePrompt || '',
       restricoes: [
         'Nao inventar informacao ausente.',
         'Nao adicionar publico, uso, ambiente ou aplicacao sem dado explicito.',
         'Nao remover modelo/referencia/material/tamanho existentes.',
         'Titulo maximo de 60 caracteres.',
-        'Descricao curta em texto corrido, sem inventar uso ou beneficio.'
+        'Descricao curta em texto corrido, sem inventar uso ou beneficio.',
+        'Memoria aprendida serve apenas para estilo; atributos do produto atual continuam obrigatorios.'
       ]
     });
 

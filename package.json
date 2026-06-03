@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --env-file-if-exists=.env server.js",
-    "test:titles": "node scripts/test-title-optimizer.js"
+    "test:titles": "node scripts/test-title-optimizer.js",
+    "test:memory": "node scripts/test-optimizer-memory.js"
   },
   "dependencies": {
     "express": "^4.19.2"

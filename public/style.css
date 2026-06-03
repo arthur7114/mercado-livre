@@ -634,6 +634,58 @@ button {
   color: var(--text-primary);
 }
 
+.memory-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.memory-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.memory-list {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.memory-item,
+.memory-empty {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.75rem;
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.75rem;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.memory-empty {
+  display: block;
+}
+
+.memory-original,
+.memory-optimized {
+  overflow-wrap: anywhere;
+}
+
+.memory-optimized {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.memory-arrow {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
   25% { transform: translateX(-4px); }
