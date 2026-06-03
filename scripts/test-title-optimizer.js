@@ -3,6 +3,7 @@ const {
   normalizeRawTitle,
   extractTitleAttributes,
   buildDeterministicTitle,
+  buildDeterministicDescription,
   validateAiTitle,
   normalizeAiRegistration,
   isHumanGateRequired
@@ -15,6 +16,7 @@ function buildContext(title, extra = {}) {
     removedTerms: normalized.removedTerms
   });
   const fallbackTitle = buildDeterministicTitle({ title, attributes });
+  const fallbackDescription = buildDeterministicDescription({ title: fallbackTitle, attributes });
 
   return {
     originalTitle: title,
@@ -24,6 +26,7 @@ function buildContext(title, extra = {}) {
     dictionaryText: '',
     attributes,
     fallbackTitle,
+    fallbackDescription,
     removedTerms: normalized.removedTerms,
     humanGate: isHumanGateRequired(attributes, title)
   };
@@ -67,8 +70,27 @@ assertFallbackTitle(
 
 {
   const context = buildContext('Estojo Duplo Fb Est 300');
+  assert.strictEqual(
+    context.fallbackDescription,
+    'Estojo Duplo. Referencia/modelo: FB EST 300.',
+    'Descrição fallback deve preservar referência sem inventar uso'
+  );
+}
+
+{
+  const context = buildContext('Sacola De Viagem Fb 05');
+  assert.strictEqual(
+    context.fallbackDescription,
+    'Sacola De Viagem. Referencia/modelo: FB 05.',
+    'Descrição fallback deve preservar o tipo composto'
+  );
+}
+
+{
+  const context = buildContext('Estojo Duplo Fb Est 300');
   const validation = validateAiTitle({
     tituloOtimizado: 'Estojo duplo FB Est 300 para escolares e escritorio',
+    descricaoOtimizada: 'Estojo escolar para escritorio com referencia FB EST 300.',
     termosRemovidos: []
   }, context);
 
@@ -80,6 +102,7 @@ assertFallbackTitle(
   const context = buildContext('Bolsa Feminina Em P.U. Moderna FB-282 M');
   const validation = validateAiTitle({
     tituloOtimizado: 'Bolsa Feminina Moderna PU FB-282 M',
+    descricaoOtimizada: 'Bolsa Feminina Moderna. Material: PU. Referencia/modelo: FB-282. Tamanho: M.',
     termosRemovidos: ['FB-282', 'Em']
   }, context);
 
@@ -91,10 +114,12 @@ assertFallbackTitle(
   const context = buildContext('Bolsa Feminina em P.U. FB-281 P - Modave Estilo');
   const validation = validateAiTitle({
     tituloOtimizado: 'Bolsa Feminina Modave PU FB-281 P',
+    descricaoOtimizada: 'Bolsa Feminina Modave. Material: PU. Referencia/modelo: FB-281. Tamanho: P.',
     termosRemovidos: ['Estilo']
   }, context);
   const registration = normalizeAiRegistration({
     tituloOtimizado: 'Bolsa Feminina Modave PU FB-281 P',
+    descricaoOtimizada: 'Bolsa Feminina Modave. Material: PU. Referencia/modelo: FB-281. Tamanho: P.',
     status: 'ok',
     confidence: 0.95,
     humanGate: true,

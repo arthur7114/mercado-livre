@@ -6,6 +6,7 @@ const {
   normalizeRawTitle,
   extractTitleAttributes,
   buildDeterministicTitle,
+  buildDeterministicDescription,
   validateAiTitle,
   normalizeAiRegistration,
   buildFallbackRegistration,
@@ -21,6 +22,7 @@ const TOKEN_COOKIE_MAX_CHUNKS = 8;
 const COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const TINY_AUTH_URL = 'https://accounts.tiny.com.br/realms/tiny/protocol/openid-connect/auth';
 const TINY_TOKEN_URL = 'https://accounts.tiny.com.br/realms/tiny/protocol/openid-connect/token';
+const ML_OPTIMIZED_MARKER = '[CADASTROS_ML_OTIMIZADO]';
 
 app.set('trust proxy', true);
 app.use(express.json({ limit: '1mb' }));
@@ -182,6 +184,71 @@ function getPublicSettings(req) {
     dictionary: [],
     basePrompt: ''
   };
+}
+
+function normalizeTinyProductPayload(data) {
+  return data?.produto || data;
+}
+
+function hasMlOptimizedMarker(product) {
+  const normalizedProduct = normalizeTinyProductPayload(product);
+  const observations = String(normalizedProduct?.observacoes || '');
+  const keywords = Array.isArray(normalizedProduct?.seo?.keywords)
+    ? normalizedProduct.seo.keywords.join(' ')
+    : String(normalizedProduct?.seo?.keywords || '');
+
+  return observations.includes(ML_OPTIMIZED_MARKER) || keywords.includes(ML_OPTIMIZED_MARKER);
+}
+
+function withMlOptimizedFlag(product) {
+  return {
+    ...product,
+    mlOtimizado: hasMlOptimizedMarker(product)
+  };
+}
+
+function updateMlOptimizedObservation(value, shouldMark) {
+  const currentValue = String(value || '')
+    .replaceAll(ML_OPTIMIZED_MARKER, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  if (!shouldMark) return currentValue;
+  return [currentValue, ML_OPTIMIZED_MARKER].filter(Boolean).join('\n');
+}
+
+async function fetchTinyProductDetails(productId, token) {
+  const response = await fetch(`https://api.tiny.com.br/public-api/v3/produtos/${productId}`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Falha ao buscar detalhes do produto ${productId}: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+async function enrichProductsWithMlOptimizedFlag(items, token) {
+  if (!Array.isArray(items) || items.length === 0) return [];
+
+  return Promise.all(items.map(async item => {
+    if (!item?.id) return withMlOptimizedFlag(item);
+
+    try {
+      const details = await fetchTinyProductDetails(item.id, token);
+      return {
+        ...item,
+        mlOtimizado: hasMlOptimizedMarker(details)
+      };
+    } catch (error) {
+      console.warn(error.message);
+      return withMlOptimizedFlag(item);
+    }
+  }));
 }
 
 async function checkAndRefreshToken(req, res) {
@@ -361,6 +428,22 @@ app.get('/api/products', async (req, res) => {
     }
 
     const data = await response.json();
+    if (Array.isArray(data.itens)) {
+      const optimizationFilter = String(req.query.mlOtimizado || '');
+      const enrichedItems = await enrichProductsWithMlOptimizedFlag(data.itens, token);
+      data.itens = optimizationFilter === 'sim'
+        ? enrichedItems.filter(item => item.mlOtimizado)
+        : optimizationFilter === 'nao'
+          ? enrichedItems.filter(item => !item.mlOtimizado)
+          : enrichedItems;
+
+      if (optimizationFilter) {
+        data.paginacao = {
+          ...(data.paginacao || {}),
+          total: data.itens.length
+        };
+      }
+    }
     res.json(data);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -383,7 +466,7 @@ app.get('/api/products/:id', async (req, res) => {
     }
 
     const data = await response.json();
-    res.json(data);
+    res.json(withMlOptimizedFlag(data));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -405,17 +488,24 @@ app.put('/api/products/:id', async (req, res) => {
       return res.status(getResponse.status).json({ error: `Erro ao buscar produto antes de salvar: ${errorText}` });
     }
 
-    const currentProduct = await getResponse.json();
+    const currentProductData = await getResponse.json();
+    const currentProduct = normalizeTinyProductPayload(currentProductData);
+    const shouldUpdateMlOptimized = updates.mlOtimizado !== undefined;
+    const updatedObservations = shouldUpdateMlOptimized
+      ? updateMlOptimizedObservation(currentProduct.observacoes, Boolean(updates.mlOtimizado))
+      : (currentProduct.observacoes || '');
     const payload = {
       sku: updates.sku || currentProduct.sku,
       descricao: updates.descricao || currentProduct.descricao,
-      descricaoComplementar: currentProduct.descricaoComplementar || '',
+      descricaoComplementar: updates.descricaoComplementar !== undefined
+        ? updates.descricaoComplementar
+        : (currentProduct.descricaoComplementar || ''),
       unidade: currentProduct.unidade || 'UN',
       unidadePorCaixa: currentProduct.unidadePorCaixa || '',
       ncm: currentProduct.ncm || '',
       gtin: currentProduct.gtin || '',
       origem: currentProduct.origem !== undefined && currentProduct.origem !== null ? parseInt(currentProduct.origem, 10) : 0,
-      observacoes: currentProduct.observacoes || '',
+      observacoes: updatedObservations,
       marca: currentProduct.marca?.id ? { id: currentProduct.marca.id } : undefined,
       categoria: currentProduct.categoria?.id ? { id: currentProduct.categoria.id } : undefined,
       precos: currentProduct.precos ? {
@@ -490,6 +580,10 @@ app.post('/api/optimize', async (req, res) => {
       title: dictionaryResult.title,
       attributes
     });
+    const fallbackDescription = buildDeterministicDescription({
+      title: fallbackTitle,
+      attributes
+    });
     const context = {
       originalTitle: title,
       dictionaryTitle: dictionaryResult.title,
@@ -501,6 +595,7 @@ app.post('/api/optimize', async (req, res) => {
         : '',
       attributes,
       fallbackTitle,
+      fallbackDescription,
       removedTerms: [...dictionaryResult.removedTerms, ...normalizedResult.removedTerms],
       humanGate: isHumanGateRequired(attributes, dictionaryResult.title)
     };
@@ -510,6 +605,7 @@ app.post('/api/optimize', async (req, res) => {
       'A IA é uma montadora supervisionada: não descubra, não enriqueça e não invente atributos.',
       'Use somente atributos permitidos no JSON do usuário.',
       'O título final deve ter no máximo 60 caracteres.',
+      'A descrição final deve ser curta, objetiva e baseada apenas nos atributos permitidos.',
       'Prioridade: tipo do produto + marca + atributo distintivo + material + modelo/referência + tamanho/cor/quantidade.',
       'Não adicione público-alvo, ocasião, uso, ambiente ou aplicação se isso não estiver nos dados.',
       'Não use termos promocionais como premium, top, melhor, perfeito ou garantido.',
@@ -519,6 +615,7 @@ app.post('/api/optimize', async (req, res) => {
       '- Bolsa Feminina Em P.U. Moderna FB-282 M -> Bolsa Feminina Moderna PU FB-282 M',
       '- Estojo Duplo Fb Est 300 -> Estojo Duplo FB EST 300',
       'Exemplo proibido: adicionar "para escolares e escritório" se isso não aparecer nos dados.',
+      'Na descrição, não cite uso, público, ocasião ou benefícios que não estejam nos dados.',
       'Responda exclusivamente JSON válido conforme o schema. Não use markdown.'
     ].join('\n');
 
@@ -532,13 +629,15 @@ app.post('/api/optimize', async (req, res) => {
       },
       atributosPermitidos: attributes,
       fallbackSeguro: fallbackTitle,
+      descricaoFallbackSegura: fallbackDescription,
       termosRemovidosLocalmente: context.removedTerms,
       regrasUsuario: basePrompt || '',
       restricoes: [
         'Nao inventar informacao ausente.',
         'Nao adicionar publico, uso, ambiente ou aplicacao sem dado explicito.',
         'Nao remover modelo/referencia/material/tamanho existentes.',
-        'Titulo maximo de 60 caracteres.'
+        'Titulo maximo de 60 caracteres.',
+        'Descricao curta em texto corrido, sem inventar uso ou beneficio.'
       ]
     });
 
@@ -547,6 +646,7 @@ app.post('/api/optimize', async (req, res) => {
       additionalProperties: false,
       properties: {
         tituloOtimizado: { type: 'string' },
+        descricaoOtimizada: { type: 'string' },
         status: { type: 'string', enum: ['ok', 'needs_review', 'blocked'] },
         confidence: { type: 'number', minimum: 0, maximum: 1 },
         humanGate: { type: 'boolean' },
@@ -603,6 +703,7 @@ app.post('/api/optimize', async (req, res) => {
       },
       required: [
         'tituloOtimizado',
+        'descricaoOtimizada',
         'status',
         'confidence',
         'humanGate',
@@ -636,7 +737,7 @@ app.post('/api/optimize', async (req, res) => {
               content: userPrompt
             }
           ],
-          max_output_tokens: 900,
+          max_output_tokens: 1200,
           text: {
             format: {
               type: 'json_schema',

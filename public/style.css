@@ -278,7 +278,7 @@ body::after {
 /* Form Styles & Inputs */
 .filters-row {
   display: grid;
-  grid-template-columns: 2fr 1.2fr 1fr auto;
+  grid-template-columns: 1.8fr 1.1fr 1fr 1fr auto;
   gap: 1rem;
   align-items: flex-end;
   padding-bottom: 1.5rem;
@@ -539,6 +539,18 @@ button {
   line-height: 1.4;
 }
 
+.suggestion-label {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.suggested-description {
+  min-height: 80px !important;
+}
+
 .char-counter {
   font-size: 0.75rem;
   text-align: right;
@@ -654,6 +666,11 @@ button {
   background-color: rgba(255, 51, 102, 0.1);
   color: var(--danger);
   border-color: rgba(255, 51, 102, 0.15);
+}
+.requirement-badge.warning {
+  background-color: rgba(255, 170, 0, 0.1);
+  color: var(--warning);
+  border-color: rgba(255, 170, 0, 0.18);
 }
 
 .table-empty {

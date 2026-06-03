@@ -80,6 +80,10 @@ function getGenerationSourceLabel(source) {
   return 'IA';
 }
 
+function isMlOptimized(product) {
+  return Boolean(product?.mlOtimizado);
+}
+
 function renderAiQualityPanel(data) {
   if (!data) return '<div class="ai-quality-panel empty">Aguardando análise da IA.</div>';
 
@@ -296,6 +300,7 @@ async function loadProducts(e) {
   const nome = document.getElementById('filter-nome').value.trim();
   const codigo = document.getElementById('filter-sku').value.trim();
   const situacao = document.getElementById('filter-situacao').value;
+  const mlOtimizado = document.getElementById('filter-ml-optimized').value;
 
   const offset = (currentPage - 1) * limit;
   const queryParams = new URLSearchParams({
@@ -306,6 +311,7 @@ async function loadProducts(e) {
 
   if (nome) queryParams.append('nome', nome);
   if (codigo) queryParams.append('codigo', codigo);
+  if (mlOtimizado) queryParams.append('mlOtimizado', mlOtimizado);
 
   try {
     const res = await fetch(`/api/products?${queryParams.toString()}`, { cache: 'no-store' });
@@ -364,8 +370,11 @@ function renderProductsList() {
 
     const precoBadgeClass = hasPreco ? 'valid' : 'invalid';
     const precoBadgeText = hasPreco ? 'Preço' : 'Sem Preço';
+    const optimizedBadgeClass = isMlOptimized(item) ? 'valid' : 'warning';
+    const optimizedBadgeText = isMlOptimized(item) ? 'ML Otimizado' : 'Não otimizado';
 
     const highlightedTitle = highlightInternalTerms(item.descricao);
+    const initialDescription = item.aiRegistration?.descricaoOtimizada || item.descricaoComplementar || item.seo?.descricao || '';
 
     return `
       <tr id="product-row-${item.id}">
@@ -388,10 +397,15 @@ function renderProductsList() {
         </td>
         <td>
           <div class="suggested-input-container">
+            <span class="suggestion-label">Título ML</span>
             <textarea id="suggested-title-${item.id}" 
                       placeholder="Título sugerido pela IA aparecerá aqui..."
                       oninput="updateCharCounter('${item.id}')"></textarea>
             <div class="char-counter" id="char-counter-${item.id}">0 / 60</div>
+            <span class="suggestion-label">Descrição ML</span>
+            <textarea id="suggested-description-${item.id}"
+                      class="suggested-description"
+                      placeholder="Descrição otimizada aparecerá aqui...">${escapeHtml(initialDescription)}</textarea>
             <div id="ai-quality-${item.id}">
               ${renderAiQualityPanel(item.aiRegistration)}
             </div>
@@ -402,6 +416,7 @@ function renderProductsList() {
             <span class="requirement-badge ${skuBadgeClass}">${skuBadgeText}</span>
             <span class="requirement-badge ${gtinBadgeClass}">${gtinBadgeText}</span>
             <span class="requirement-badge ${precoBadgeClass}">${precoBadgeText}</span>
+            <span id="optimized-badge-${item.id}" class="requirement-badge ${optimizedBadgeClass}">${optimizedBadgeText}</span>
           </div>
         </td>
         <td>
@@ -492,8 +507,13 @@ async function optimizeProduct(productId) {
   if (!product) return;
 
   const textarea = document.getElementById(`suggested-title-${productId}`);
+  const descriptionTextarea = document.getElementById(`suggested-description-${productId}`);
   textarea.value = "Otimizando...";
   textarea.disabled = true;
+  if (descriptionTextarea) {
+    descriptionTextarea.value = "Criando descrição...";
+    descriptionTextarea.disabled = true;
+  }
   setAiQualityPanel(productId, '<div class="ai-quality-panel loading">Analisando cadastro...</div>');
 
   try {
@@ -518,6 +538,10 @@ async function optimizeProduct(productId) {
     product.aiRegistration = data;
     textarea.value = data.tituloOtimizado || '';
     textarea.disabled = false;
+    if (descriptionTextarea) {
+      descriptionTextarea.value = data.descricaoOtimizada || '';
+      descriptionTextarea.disabled = false;
+    }
     updateCharCounter(productId);
     setAiQualityPanel(productId, renderAiQualityPanel(data));
 
@@ -532,6 +556,10 @@ async function optimizeProduct(productId) {
     console.error(err);
     textarea.value = "";
     textarea.disabled = false;
+    if (descriptionTextarea) {
+      descriptionTextarea.value = "";
+      descriptionTextarea.disabled = false;
+    }
     setAiQualityPanel(productId, '<div class="ai-quality-panel blocked">Falha ao gerar análise da IA.</div>');
     showToast(`Erro na otimização: ${err.message}`, 'error');
   }
@@ -540,7 +568,9 @@ async function optimizeProduct(productId) {
 // SAVE INDIVIDUAL PRODUCT CHANGES TO TINY ERP
 async function saveProduct(productId) {
   const suggestedTitleInput = document.getElementById(`suggested-title-${productId}`);
+  const suggestedDescriptionInput = document.getElementById(`suggested-description-${productId}`);
   const newTitle = suggestedTitleInput.value.trim();
+  const newDescription = suggestedDescriptionInput ? suggestedDescriptionInput.value.trim() : '';
 
   if (!newTitle || newTitle === "Otimizando...") {
     showToast('Por favor, gere ou digite um título sugerido primeiro.', 'warning');
@@ -559,6 +589,7 @@ async function saveProduct(productId) {
   }
 
   suggestedTitleInput.disabled = true;
+  if (suggestedDescriptionInput) suggestedDescriptionInput.disabled = true;
 
   try {
     const res = await fetch(`/api/products/${productId}`, {
@@ -566,8 +597,11 @@ async function saveProduct(productId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         descricao: newTitle,
+        descricaoComplementar: newDescription,
+        mlOtimizado: true,
         seo: {
-          titulo: newTitle
+          titulo: newTitle,
+          descricao: newDescription
         }
       })
     });
@@ -581,15 +615,23 @@ async function saveProduct(productId) {
     // Reload only this product info in local array list if needed
     if (product) {
       product.descricao = newTitle;
+      product.descricaoComplementar = newDescription;
+      product.mlOtimizado = true;
       // Refresh display row
       const row = document.getElementById(`product-row-${productId}`);
       row.querySelector('.erp-title-container').innerHTML = highlightInternalTerms(newTitle);
+      const optimizedBadge = document.getElementById(`optimized-badge-${productId}`);
+      if (optimizedBadge) {
+        optimizedBadge.className = 'requirement-badge valid';
+        optimizedBadge.innerText = 'ML Otimizado';
+      }
     }
   } catch (err) {
     console.error(err);
     showToast(`Erro ao salvar: ${err.message}`, 'error');
   } finally {
     suggestedTitleInput.disabled = false;
+    if (suggestedDescriptionInput) suggestedDescriptionInput.disabled = false;
   }
 }
 
@@ -626,7 +668,9 @@ async function bulkSave() {
 
   for (const id of ids) {
     const input = document.getElementById(`suggested-title-${id}`);
+    const descriptionInput = document.getElementById(`suggested-description-${id}`);
     const val = input ? input.value.trim() : '';
+    const descriptionVal = descriptionInput ? descriptionInput.value.trim() : '';
     
     if (val && val !== "Otimizando..." && val.length <= 60) {
       try {
@@ -635,8 +679,11 @@ async function bulkSave() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             descricao: val,
+            descricaoComplementar: descriptionVal,
+            mlOtimizado: true,
             seo: {
-              titulo: val
+              titulo: val,
+              descricao: descriptionVal
             }
           })
         });
@@ -647,9 +694,16 @@ async function bulkSave() {
           const product = products.find(p => p.id == id);
           if (product) {
             product.descricao = val;
+            product.descricaoComplementar = descriptionVal;
+            product.mlOtimizado = true;
             const row = document.getElementById(`product-row-${id}`);
             if (row) {
               row.querySelector('.erp-title-container').innerHTML = highlightInternalTerms(val);
+              const optimizedBadge = document.getElementById(`optimized-badge-${id}`);
+              if (optimizedBadge) {
+                optimizedBadge.className = 'requirement-badge valid';
+                optimizedBadge.innerText = 'ML Otimizado';
+              }
             }
           }
         } else {
@@ -778,6 +832,7 @@ async function viewDetails(productId) {
     const dim = details.dimensoes || {};
     const preco = details.precos || {};
     const seo = details.seo || {};
+    const mlStatus = details.mlOtimizado ? 'Já otimizado' : 'Não otimizado';
 
     modalBody.innerHTML = `
       <div class="detail-grid">
@@ -804,6 +859,10 @@ async function viewDetails(productId) {
         <div class="detail-item">
           <span class="label">Unidade</span>
           <span class="value">${details.unidade || 'UN'}</span>
+        </div>
+        <div class="detail-item">
+          <span class="label">Otimização ML</span>
+          <span class="value">${mlStatus}</span>
         </div>
       </div>
 
@@ -836,6 +895,10 @@ async function viewDetails(productId) {
         <div class="detail-item">
           <span class="label">Título SEO</span>
           <span class="value">${seo.titulo || 'Nenhum título cadastrado'}</span>
+        </div>
+        <div class="detail-item">
+          <span class="label">Descrição Complementar</span>
+          <span class="value" style="font-size: 0.85rem; max-height: 100px; overflow-y: auto;">${details.descricaoComplementar || 'Nenhuma descrição complementar cadastrada'}</span>
         </div>
         <div class="detail-item">
           <span class="label">Descrição SEO</span>
